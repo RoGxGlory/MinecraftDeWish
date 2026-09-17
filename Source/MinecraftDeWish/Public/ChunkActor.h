@@ -93,11 +93,30 @@ public:
 
 	void SetMaterial(UMaterialInterface* Material);
 
+	/** Calculates which face of a voxel was hit (0=Top, 1=Bottom, 2=North, 3=South, 4=East, 5=West) */
+	UFUNCTION(BlueprintCallable, Category = "Voxel")
+	int32 GetHitFaceAtLocation(const FVector& HitLocation) const;
+
+	/** Identifies voxel at HitLocation and breaks it, updating mesh and spawning item pickup */
+	UFUNCTION(BlueprintCallable, Category = "Voxel")
+	bool BreakBlockAtLocation(const FVector& HitLocation, uint8& OutBrokenBlockID);
+
+	/** Retrieves BlockID and world center of the block at HitLocation */
+	UFUNCTION(BlueprintCallable, Category = "Voxel")
+	bool GetBlockDataAtLocation(const FVector& HitLocation, uint8& OutBlockID, FVector& OutBlockCenter) const;
+
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY()
 	TWeakObjectPtr<AWorldGenerator> WorldGenerator;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UPointLightComponent>> TorchLights;
+
+	void UpdateTorchLights();
+	void ClearTorchLights();
 
 private:
 	void AddFace(
@@ -107,5 +126,11 @@ private:
 		int32 TextureIndex
 	) const;
 
-	bool ShouldRenderFace(int32 NeighborX, int32 NeighborY, int32 NeighborZ) const;
+	void AddTorchMesh(
+		FChunkMeshData& MeshData,
+		const FVector& BlockPos,
+		int32 TextureIndex
+	) const;
+
+	bool ShouldRenderFace(uint8 CurrentBlockID, int32 NeighborX, int32 NeighborY, int32 NeighborZ) const;
 };

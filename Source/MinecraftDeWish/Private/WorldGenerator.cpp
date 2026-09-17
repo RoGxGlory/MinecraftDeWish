@@ -1,5 +1,6 @@
 #include "WorldGenerator.h"
 #include "ChunkActor.h"
+#include "BlockItemPickup.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
@@ -420,7 +421,8 @@ AChunkActor* AWorldGenerator::SpawnChunk(const FChunkCoord& Coord)
 		0.0f
 	);
 
-	AChunkActor* Chunk = GetWorld()->SpawnActor<AChunkActor>(AChunkActor::StaticClass(), SpawnLoc, FRotator::ZeroRotator, SpawnParams);
+	UClass* ClassToSpawn = ChunkActorClass ? ChunkActorClass.Get() : AChunkActor::StaticClass();
+	AChunkActor* Chunk = GetWorld()->SpawnActor<AChunkActor>(ClassToSpawn, SpawnLoc, FRotator::ZeroRotator, SpawnParams);
 	if (Chunk)
 	{
 		Chunk->InitializeChunk(Coord, ChunkHeight, BlockScale, this);
@@ -551,8 +553,8 @@ void AWorldGenerator::GenerateTree(AChunkActor* Chunk, int32 LocalX, int32 Local
 					const int32 Tx = LocalX + Dx;
 					const int32 Ty = LocalY + Dy;
 
-					// Avoid corners on outer layer for rounder foliage
-					if (FMath::Abs(Dx) == Radius && FMath::Abs(Dy) == Radius && FMath::RandRange(0, 10) > 3)
+					// Classic Minecraft rounded canopy: omit the 4 outer corners on radius 2 layers
+					if (Radius > 1 && FMath::Abs(Dx) == Radius && FMath::Abs(Dy) == Radius)
 					{
 						continue;
 					}
@@ -851,10 +853,22 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 					}
 				}
 			}
+		}
+	}
 
-			// Flora & Trees
-			if (bEnableTrees && X >= 2 && X <= CHUNK_SIZE_X - 3 && Y >= 2 && Y <= CHUNK_SIZE_Y - 3)
+	// Phase 2: Flora & Trees (Separate pass so air above surface does not overwrite positive Dx/Dy leaves!)
+	if (bEnableTrees)
+	{
+		for (int32 X = 2; X <= CHUNK_SIZE_X - 3; ++X)
+		{
+			for (int32 Y = 2; Y <= CHUNK_SIZE_Y - 3; ++Y)
 			{
+				const int32 WorldX = (Coord.X * CHUNK_SIZE_X) + X;
+				const int32 WorldY = (Coord.Y * CHUNK_SIZE_Y) + Y;
+
+				const EBiomeType Biome = GetBiomeAt(WorldX, WorldY);
+				const int32 TerrainHeight = GetTerrainHeight(WorldX, WorldY, Biome);
+
 				uint32 THash = (static_cast<uint32>(WorldX) * 374761393u) ^ (static_cast<uint32>(WorldY) * 668265263u) ^ static_cast<uint32>(WorldSeed);
 				THash = (THash ^ (THash >> 13)) * 1274126177u;
 				const float TreeRoll = static_cast<float>(THash & 0xFFFF) / 65535.0f;
@@ -956,12 +970,38 @@ bool AWorldGenerator::BreakBlock(const FVector& WorldLocation, uint8& OutDropped
 			}
 
 			SaveChunkDelta(*FoundChunk);
+			SpawnBlockItemDrop(WorldLocation, OutDroppedBlockID);
 			return true;
 		}
 	}
 
 	OutDroppedBlockID = 0;
 	return false;
+}
+
+void AWorldGenerator::SpawnBlockItemDrop(const FVector& WorldLocation, uint8 DroppedBlockID)
+{
+	if (DroppedBlockID == 0 || DroppedBlockID == static_cast<uint8>(EBlockType::Bedrock))
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	const FVector DropPos = WorldLocation + FVector(0.0f, 0.0f, BlockScale * 0.2f);
+
+	ABlockItemPickup* Pickup = GetWorld()->SpawnActor<ABlockItemPickup>(
+		ABlockItemPickup::StaticClass(),
+		DropPos,
+		FRotator::ZeroRotator,
+		SpawnParams
+	);
+
+	if (Pickup)
+	{
+		Pickup->InitializePickup(DroppedBlockID, 1, TerrainMaterial);
+	}
 }
 
 bool AWorldGenerator::PlaceBlock(const FVector& WorldLocation, uint8 BlockID)

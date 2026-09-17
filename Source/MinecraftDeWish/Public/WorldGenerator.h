@@ -36,6 +36,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering")
 	UMaterialInterface* TerrainMaterial = nullptr;
 
+	/** Optional Blueprint subclass of ChunkActor (e.g. BP_ChunkActor) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering")
+	TSubclassOf<AChunkActor> ChunkActorClass;
+
 	/** Data table containing block definitions (Block_DataTable) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Data")
 	UDataTable* BlockDataTable = nullptr;
@@ -136,6 +140,8 @@ private:
 	int32 GetTerrainHeight(int32 WorldX, int32 WorldY, EBiomeType Biome) const;
 	void GenerateTree(AChunkActor* Chunk, int32 LocalX, int32 LocalY, int32 SurfaceZ, EBiomeType Biome);
 	void GenerateVillageHouse(AChunkActor* Chunk, int32 CenterX, int32 CenterY, int32 SurfaceZ);
+
+	void SpawnBlockItemDrop(const FVector& WorldLocation, uint8 DroppedBlockID);
 
 	// Persistence helpers
 	FString GetChunkSaveFilePath(const FChunkCoord& Coord) const;
