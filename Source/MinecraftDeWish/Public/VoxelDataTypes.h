@@ -142,6 +142,68 @@ struct MINECRAFTDEWISH_API FBlockTextureData
 	}
 };
 
+/**
+ * Static block classification helpers for collision and rendering decisions.
+ * Non-solid blocks generate mesh geometry that only responds to line traces (QueryOnly),
+ * while solid blocks generate mesh with full physics collision (QueryAndPhysics).
+ */
+struct MINECRAFTDEWISH_API FBlockHelpers
+{
+	/** Returns true for blocks that should NOT block player physics (torch, seeds, flowers) */
+	static bool IsNonSolidBlock(uint8 BlockID)
+	{
+		return BlockID == static_cast<uint8>(EBlockType::Torch);
+		// Future: add seeds, flowers, tall grass, etc.
+	}
+
+	/** Returns the EBlockType display name for a given BlockID */
+	static FString GetBlockDisplayName(uint8 BlockID)
+	{
+		const UEnum* Enum = StaticEnum<EBlockType>();
+		if (Enum)
+		{
+			return Enum->GetDisplayNameTextByValue(static_cast<int64>(BlockID)).ToString();
+		}
+		return FString::Printf(TEXT("Block_%d"), BlockID);
+	}
+
+	/** Returns the harvest tool type best suited for a block (for tool specialization) */
+	static uint8 GetPreferredToolType(uint8 BlockID)
+	{
+		// 1=Pickaxe, 2=Shovel, 3=Axe, 4=Hoe, 5=Sword, 0=Any
+		switch (static_cast<EBlockType>(BlockID))
+		{
+		case EBlockType::Stone:
+		case EBlockType::Cobblestone:
+		case EBlockType::Iron_Ore:
+		case EBlockType::Iron_Block:
+		case EBlockType::Gold_Ore:
+		case EBlockType::Gold_Block:
+		case EBlockType::Diamond_Ore:
+		case EBlockType::Diamond_Block:
+		case EBlockType::Emerald_Ore:
+		case EBlockType::Emerald_Block:
+		case EBlockType::Coal_Ore:
+		case EBlockType::Furnace:
+			return 1; // Pickaxe
+		case EBlockType::Dirt:
+		case EBlockType::Grass:
+		case EBlockType::Sand:
+			return 2; // Shovel
+		case EBlockType::Wood_Log:
+		case EBlockType::Wood_Planks:
+		case EBlockType::Crafting_Table:
+		case EBlockType::Barrel:
+		case EBlockType::Fence:
+		case EBlockType::Fence_Door:
+		case EBlockType::Door:
+			return 3; // Axe
+		default:
+			return 0; // Any tool
+		}
+	}
+};
+
 /** Structure for serializing modified blocks inside a chunk */
 USTRUCT()
 struct FChunkDeltaSaveData
@@ -157,4 +219,38 @@ struct FChunkDeltaSaveData
 	// Local block index -> BlockID
 	UPROPERTY()
 	TMap<int32, uint8> ModifiedBlocks;
+};
+
+/** Tool Tiers */
+UENUM(BlueprintType)
+enum class EToolTier : uint8
+{
+	None     = 0 UMETA(DisplayName = "Hand (No Tool)"),
+	Wood     = 1 UMETA(DisplayName = "Wood Tool"),
+	Stone    = 2 UMETA(DisplayName = "Stone Tool"),
+	Iron     = 3 UMETA(DisplayName = "Iron Tool"),
+	Diamond  = 4 UMETA(DisplayName = "Diamond Tool"),
+	Obsidian = 5 UMETA(DisplayName = "Obsidian Tool")
+};
+
+/** Active concurrent mining task */
+USTRUCT(BlueprintType)
+struct FMiningTask
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Mining")
+	FIntVector VoxelCoord = FIntVector(-1, -1, -1);
+
+	UPROPERTY(BlueprintReadOnly, Category = "Mining")
+	uint8 BlockID = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Mining")
+	float TotalBreakTime = 1.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Mining")
+	float ElapsedTime = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Mining")
+	float Progress = 0.0f;
 };

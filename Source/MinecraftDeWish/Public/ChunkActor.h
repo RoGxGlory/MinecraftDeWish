@@ -47,6 +47,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UProceduralMeshComponent* ProceduralMesh;
 
+	/** Separate mesh for non-solid blocks (torches, seeds) — QueryOnly collision (no physics blocking) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UProceduralMeshComponent* NonSolidMesh;
+
 	/** Chunk coordinates in grid space */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voxel")
 	FChunkCoord ChunkCoord;
@@ -81,11 +85,11 @@ public:
 	uint8 GetBlock(int32 X, int32 Y, int32 Z) const;
 	void SetBlock(int32 X, int32 Y, int32 Z, uint8 BlockID);
 
-	/** Builds mesh data into the provided buffer (thread-safe) */
-	void GenerateMeshData(FChunkMeshData& OutMeshData) const;
+	/** Builds mesh data into the provided buffers (thread-safe) */
+	void GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshData& OutNonSolidMeshData) const;
 
 	/** Applies generated mesh data to the procedural mesh component (must run on GameThread) */
-	void ApplyMeshData(const FChunkMeshData& InMeshData);
+	void ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FChunkMeshData& InNonSolidMeshData);
 
 	/** Rebuilds chunk mesh synchronously */
 	UFUNCTION(BlueprintCallable, Category = "Voxel")
@@ -104,6 +108,46 @@ public:
 	/** Retrieves BlockID and world center of the block at HitLocation */
 	UFUNCTION(BlueprintCallable, Category = "Voxel")
 	bool GetBlockDataAtLocation(const FVector& HitLocation, uint8& OutBlockID, FVector& OutBlockCenter) const;
+
+	/** Returns the Row Name in Block_DataTable for the currently targeted block (e.g. "Grass", "Dirt", "Stone") */
+	UFUNCTION(BlueprintCallable, Category = "Voxel")
+	FName GetTargetedBlockRowName() const;
+
+	/** Breaks the currently targeted voxel block, spawning its pickup item and updating meshes */
+	UFUNCTION(BlueprintCallable, Category = "Voxel")
+	void BreakTargetedBlock();
+
+	/** Gets currently targeted block ID */
+	UFUNCTION(BlueprintCallable, Category = "Voxel")
+	uint8 GetTargetedBlockID() const;
+
+	/** Gets currently targeted block durability from Block_DataTable for mining calculation */
+	UFUNCTION(BlueprintCallable, Category = "Voxel")
+	float GetTargetedBlockDurability() const;
+
+	/** Calculates the exact mining break time in seconds based on block durability and tool mining force */
+	UFUNCTION(BlueprintPure, Category = "Voxel")
+	float GetTargetedBlockBreakTime(float MiningForce) const;
+
+	/** Calculates timeline play rate based on mining force and durability */
+	UFUNCTION(BlueprintPure, Category = "Voxel")
+	float GetTargetedBlockPlayRate(float MiningForce, float TimelineLength = 1.0f) const;
+
+	/** Returns the 2D icon texture for a given BlockID to display in WB_BlockInfo or UI slots */
+	UFUNCTION(BlueprintPure, Category = "Voxel|UI")
+	static UTexture2D* GetBlockIconTexture(int32 InBlockID);
+
+	/** Returns the 2D icon texture for a given Global_Textures_Array slice index */
+	UFUNCTION(BlueprintPure, Category = "Voxel|UI")
+	static UTexture2D* GetBlockIconFromSlice(int32 TextureSliceIndex);
+
+	virtual void ProcessEvent(UFunction* Function, void* Parms) override;
+
+	UPROPERTY()
+	FVector LastTargetedHitLocation = FVector::ZeroVector;
+
+	UPROPERTY()
+	FIntVector LastTargetedVoxelCoord = FIntVector(-1, -1, -1);
 
 protected:
 	virtual void BeginPlay() override;

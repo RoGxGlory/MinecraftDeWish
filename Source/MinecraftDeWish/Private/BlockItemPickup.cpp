@@ -1,5 +1,6 @@
 #include "BlockItemPickup.h"
 #include "WorldGenerator.h"
+#include "QuickSlotsInventorySystem.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "UObject/UObjectIterator.h"
@@ -12,7 +13,7 @@ ABlockItemPickup::ABlockItemPickup()
 
 	SphereComponent = CreateDefaultSubobject<USphereComponent>(TEXT("SphereComponent"));
 	RootComponent = SphereComponent;
-	SphereComponent->InitSphereRadius(45.0f);
+	SphereComponent->InitSphereRadius(90.0f); // 2x attraction/grab radius (was 45.0f)
 	SphereComponent->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
 	SphereComponent->SetGenerateOverlapEvents(true);
 
@@ -28,6 +29,10 @@ void ABlockItemPickup::BeginPlay()
 
 	SphereComponent->OnComponentBeginOverlap.AddDynamic(this, &ABlockItemPickup::OnOverlapBegin);
 
+	// Initial gentle pop when spawning
+	VerticalVelocity = 120.0f;
+	bIsGrounded = false;
+
 	if (MiniBlockMesh->GetNumSections() == 0)
 	{
 		InitializePickup(BlockID, ItemCount, nullptr);
@@ -40,12 +45,183 @@ void ABlockItemPickup::Tick(float DeltaTime)
 
 	RunningTime += DeltaTime;
 
-	// Rotate around Z axis
+	// Rotate continuously around Z axis
 	AddActorLocalRotation(FRotator(0.0f, RotationSpeed * DeltaTime, 0.0f));
+
+	// Physics gravity simulation
+	UpdateGravity(DeltaTime);
+
+	// Magnet attraction toward player
+	UpdatePlayerAttraction(DeltaTime);
+
+	// Stack merging in the world (up to 64 items)
+	CheckNearbyStackMerging();
 
 	// Gentle floating bob
 	const float BobOffsetZ = FMath::Sin(RunningTime * BobFrequency) * BobHeight;
 	MiniBlockMesh->SetRelativeLocation(MeshBaseOffset + FVector(0.0f, 0.0f, BobOffsetZ));
+}
+
+void ABlockItemPickup::UpdatePlayerAttraction(float DeltaTime)
+{
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC || !PC->GetPawn())
+	{
+		return;
+	}
+
+	const FVector PlayerTarget = PC->GetPawn()->GetActorLocation() + FVector(0.0f, 0.0f, -20.0f);
+	const FVector MyLoc = GetActorLocation();
+	const float Dist = FVector::Dist(PlayerTarget, MyLoc);
+
+	if (Dist < AttractionRadius && Dist > 15.0f)
+	{
+		const FVector FlyDir = (PlayerTarget - MyLoc).GetSafeNormal();
+		const float PullRatio = 1.0f - (Dist / AttractionRadius);
+		const float CurrentSpeed = FMath::Lerp(AttractSpeed * 0.6f, AttractSpeed * 1.5f, PullRatio);
+
+		AddActorWorldOffset(FlyDir * CurrentSpeed * DeltaTime, false);
+		bIsGrounded = false;
+	}
+}
+
+void ABlockItemPickup::UpdateGravity(float DeltaTime)
+{
+	if (!bIsGrounded)
+	{
+		VerticalVelocity -= GravityStrength * DeltaTime;
+		const float StepZ = VerticalVelocity * DeltaTime;
+
+		const FVector CurrentLoc = GetActorLocation();
+		const FVector TraceEnd = CurrentLoc + FVector(0.0f, 0.0f, StepZ - 14.0f);
+
+		FHitResult Hit;
+		FCollisionQueryParams Params;
+		Params.AddIgnoredActor(this);
+
+		if (GetWorld()->LineTraceSingleByChannel(Hit, CurrentLoc, TraceEnd, ECC_WorldStatic, Params))
+		{
+			bIsGrounded = true;
+			VerticalVelocity = 0.0f;
+			GroundZ = Hit.ImpactPoint.Z + 14.0f;
+			SetActorLocation(FVector(CurrentLoc.X, CurrentLoc.Y, GroundZ));
+		}
+		else
+		{
+			AddActorWorldOffset(FVector(0.0f, 0.0f, StepZ));
+		}
+	}
+	else
+	{
+		// Grounded: periodically verify ground still exists (in case block below was mined)
+		CheckFloorTimer += DeltaTime;
+		if (CheckFloorTimer >= 0.2f)
+		{
+			CheckFloorTimer = 0.0f;
+			const FVector CurrentLoc = GetActorLocation();
+			const FVector TraceEnd = CurrentLoc - FVector(0.0f, 0.0f, 25.0f);
+
+			FHitResult Hit;
+			FCollisionQueryParams Params;
+			Params.AddIgnoredActor(this);
+
+			if (!GetWorld()->LineTraceSingleByChannel(Hit, CurrentLoc, TraceEnd, ECC_WorldStatic, Params))
+			{
+				bIsGrounded = false;
+				VerticalVelocity = 0.0f;
+			}
+		}
+	}
+}
+
+void ABlockItemPickup::CheckNearbyStackMerging()
+{
+	CheckMergeTimer += 0.05f;
+	if (CheckMergeTimer < 0.2f)
+	{
+		return;
+	}
+	CheckMergeTimer = 0.0f;
+
+	TArray<AActor*> OverlappingPickups;
+	SphereComponent->GetOverlappingActors(OverlappingPickups, ABlockItemPickup::StaticClass());
+
+	for (AActor* Actor : OverlappingPickups)
+	{
+		ABlockItemPickup* Other = Cast<ABlockItemPickup>(Actor);
+		if (!Other || Other == this || Other->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		if (Other->BlockID != this->BlockID)
+		{
+			continue;
+		}
+
+		// Use deterministic ID pairing so only one pickup drives the merge
+		if (this->GetUniqueID() > Other->GetUniqueID())
+		{
+			continue;
+		}
+
+		if (this->ItemCount >= MaxStackSize)
+		{
+			// Primary stack is already at maximum (64).
+			// If a 65th item tries to merge, ensure it stays visible as a secondary stack next to this stack
+			const float DistSq = FVector::DistSquared(this->GetActorLocation(), Other->GetActorLocation());
+			if (DistSq < 28.0f * 28.0f)
+			{
+				FVector PushDir = (Other->GetActorLocation() - this->GetActorLocation()).GetSafeNormal2D();
+				if (PushDir.IsNearlyZero())
+				{
+					PushDir = FVector(1.0f, 0.0f, 0.0f);
+				}
+				Other->SetActorLocation(this->GetActorLocation() + (PushDir * 35.0f));
+				Other->bIsGrounded = false;
+			}
+		}
+		else
+		{
+			const int32 Space = MaxStackSize - this->ItemCount;
+			const int32 AmountToTake = FMath::Min(Space, Other->ItemCount);
+
+			this->ItemCount += AmountToTake;
+			Other->ItemCount -= AmountToTake;
+			this->UpdatePileMesh();
+
+			if (Other->ItemCount <= 0)
+			{
+				Other->Destroy();
+			}
+			else
+			{
+				// Overflow items remaining in Other (e.g. 65th item)!
+				// Position Other distinctly beside the primary stack (+35cm)
+				FVector PushDir = (Other->GetActorLocation() - this->GetActorLocation()).GetSafeNormal2D();
+				if (PushDir.IsNearlyZero())
+				{
+					PushDir = FVector(1.0f, 0.0f, 0.0f);
+				}
+				Other->SetActorLocation(this->GetActorLocation() + (PushDir * 35.0f));
+				Other->bIsGrounded = false;
+				Other->UpdatePileMesh();
+			}
+		}
+	}
+}
+
+void ABlockItemPickup::UpdatePileMesh()
+{
+	if (!CachedMaterial)
+	{
+		CachedMaterial = Cast<UMaterialInterface>(StaticLoadObject(
+			UMaterialInterface::StaticClass(),
+			nullptr,
+			TEXT("/Game/Materials/M_Global.M_Global")
+		));
+	}
+	BuildMiniBlockMesh(CachedMaterial);
 }
 
 void ABlockItemPickup::InitializePickup(uint8 InBlockID, int32 InCount, UMaterialInterface* InMaterial)
@@ -61,6 +237,7 @@ void ABlockItemPickup::InitializePickup(uint8 InBlockID, int32 InCount, UMateria
 			TEXT("/Game/Materials/M_Global.M_Global")
 		));
 	}
+	CachedMaterial = InMaterial;
 
 	BuildMiniBlockMesh(InMaterial);
 }
@@ -141,7 +318,7 @@ void ABlockItemPickup::BuildMiniBlockMesh(UMaterialInterface* Material)
 		}
 	}
 
-	const float H = 12.0f; // 24cm miniature cube
+	const float H = 9.0f; // miniature block radius
 
 	auto AddQuad = [&](const FVector& V0, const FVector& V1, const FVector& V2, const FVector& V3, const FVector& Normal, int32 TexSlice)
 	{
@@ -188,18 +365,53 @@ void ABlockItemPickup::BuildMiniBlockMesh(UMaterialInterface* Material)
 		Tangents.Add(Tangent);
 	};
 
-	// Top (+Z)
-	AddQuad(FVector(-H, -H, H), FVector(H, -H, H), FVector(H, H, H), FVector(-H, H, H), FVector(0.0f, 0.0f, 1.0f), TopTex);
-	// Bottom (-Z)
-	AddQuad(FVector(-H, H, -H), FVector(H, H, -H), FVector(H, -H, -H), FVector(-H, -H, -H), FVector(0.0f, 0.0f, -1.0f), BottomTex);
-	// North (+X)
-	AddQuad(FVector(H, -H, -H), FVector(H, H, -H), FVector(H, H, H), FVector(H, -H, H), FVector(1.0f, 0.0f, 0.0f), FrontTex);
-	// South (-X)
-	AddQuad(FVector(-H, H, -H), FVector(-H, -H, -H), FVector(-H, -H, H), FVector(-H, H, H), FVector(-1.0f, 0.0f, 0.0f), SideTex);
-	// East (+Y)
-	AddQuad(FVector(H, H, -H), FVector(-H, H, -H), FVector(-H, H, H), FVector(H, H, H), FVector(0.0f, 1.0f, 0.0f), SideTex);
-	// West (-Y)
-	AddQuad(FVector(-H, -H, -H), FVector(H, -H, -H), FVector(H, -H, H), FVector(-H, -H, H), FVector(0.0f, -1.0f, 0.0f), SideTex);
+	auto AddCube = [&](const FVector& CenterOffset, float YawDegrees)
+	{
+		const FRotator Rot(0.0f, YawDegrees, 0.0f);
+		const FMatrix RotMat = FRotationMatrix(Rot);
+
+		auto Xform = [&](const FVector& LocalPos) -> FVector
+		{
+			return RotMat.TransformPosition(LocalPos) + CenterOffset;
+		};
+
+		// Top (+Z)
+		AddQuad(Xform(FVector(-H, -H, H)), Xform(FVector(H, -H, H)), Xform(FVector(H, H, H)), Xform(FVector(-H, H, H)), RotMat.TransformVector(FVector(0.0f, 0.0f, 1.0f)), TopTex);
+		// Bottom (-Z)
+		AddQuad(Xform(FVector(-H, H, -H)), Xform(FVector(H, H, -H)), Xform(FVector(H, -H, -H)), Xform(FVector(-H, -H, -H)), RotMat.TransformVector(FVector(0.0f, 0.0f, -1.0f)), BottomTex);
+		// North (+X)
+		AddQuad(Xform(FVector(H, -H, -H)), Xform(FVector(H, H, -H)), Xform(FVector(H, H, H)), Xform(FVector(H, -H, H)), RotMat.TransformVector(FVector(1.0f, 0.0f, 0.0f)), FrontTex);
+		// South (-X)
+		AddQuad(Xform(FVector(-H, H, -H)), Xform(FVector(-H, -H, -H)), Xform(FVector(-H, -H, H)), Xform(FVector(-H, H, H)), RotMat.TransformVector(FVector(-1.0f, 0.0f, 0.0f)), SideTex);
+		// East (+Y)
+		AddQuad(Xform(FVector(H, H, -H)), Xform(FVector(-H, H, -H)), Xform(FVector(-H, H, H)), Xform(FVector(H, H, H)), RotMat.TransformVector(FVector(0.0f, 1.0f, 0.0f)), SideTex);
+		// West (-Y)
+		AddQuad(Xform(FVector(-H, -H, -H)), Xform(FVector(H, -H, -H)), Xform(FVector(H, -H, H)), Xform(FVector(-H, -H, H)), RotMat.TransformVector(FVector(0.0f, -1.0f, 0.0f)), SideTex);
+	};
+
+	// Visually stack items as a miniature pile based on stack count
+	if (ItemCount <= 1)
+	{
+		AddCube(FVector::ZeroVector, 0.0f);
+	}
+	else if (ItemCount < 16)
+	{
+		AddCube(FVector(-3.5f, -3.0f, 0.0f), -15.0f);
+		AddCube(FVector(3.5f, 3.0f, 2.0f), 25.0f);
+	}
+	else if (ItemCount < 32)
+	{
+		AddCube(FVector(-4.5f, -3.5f, 0.0f), -20.0f);
+		AddCube(FVector(4.0f, -2.5f, 1.5f), 30.0f);
+		AddCube(FVector(-1.0f, 4.0f, 3.0f), 10.0f);
+	}
+	else
+	{
+		AddCube(FVector(-5.0f, -4.0f, 0.0f), -25.0f);
+		AddCube(FVector(4.5f, -3.0f, 1.5f), 35.0f);
+		AddCube(FVector(-2.0f, 4.5f, 2.5f), 15.0f);
+		AddCube(FVector(0.0f, 0.0f, 6.5f), -10.0f);
+	}
 
 	MiniBlockMesh->CreateMeshSection_LinearColor(
 		0,
@@ -250,79 +462,27 @@ void ABlockItemPickup::OnOverlapBegin(
 
 bool ABlockItemPickup::TryAddToPlayerInventory(AActor* PlayerActor)
 {
-	UDataTable* BlockDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/Block_DataTable.Block_DataTable"));
-	if (!BlockDataTable)
+	if (!PlayerActor)
 	{
 		return false;
 	}
 
-	const UScriptStruct* RowStruct = BlockDataTable->GetRowStruct();
-	if (!RowStruct)
-	{
-		return false;
-	}
+	int32 RemainingCount = ItemCount;
+	const bool bAdded = UQuickSlotsInventorySystem::TryAddItemToPlayerInventory(PlayerActor, BlockID, ItemCount, RemainingCount);
 
-	// Find matching row for BlockID
-	const uint8* FoundRow = nullptr;
-	for (auto It = BlockDataTable->GetRowMap().CreateConstIterator(); It; ++It)
+	if (bAdded)
 	{
-		const uint8* RowData = It.Value();
-		if (!RowData) continue;
-
-		int32 RowBlockID = 0;
-		for (TFieldIterator<FIntProperty> PropIt(RowStruct); PropIt; ++PropIt)
+		if (RemainingCount <= 0)
 		{
-			if (PropIt->GetName().Contains(TEXT("BlockID"), ESearchCase::IgnoreCase))
-			{
-				RowBlockID = PropIt->GetPropertyValue_InContainer(RowData);
-				break;
-			}
-		}
-
-		if (RowBlockID == static_cast<int32>(BlockID))
-		{
-			FoundRow = RowData;
-			break;
-		}
-	}
-
-	if (!FoundRow)
-	{
-		return false;
-	}
-
-	// Search for WB_QuickSlots widget in the world
-	UUserWidget* QuickSlotsWidget = nullptr;
-	for (TObjectIterator<UUserWidget> It; It; ++It)
-	{
-		if (It->GetWorld() == GetWorld() && It->GetClass()->GetName().Contains(TEXT("WB_QuickSlots")))
-		{
-			QuickSlotsWidget = *It;
-			break;
-		}
-	}
-
-	if (QuickSlotsWidget)
-	{
-		UFunction* ProcessFunc = QuickSlotsWidget->FindFunction(FName(TEXT("ProcessBlock")));
-		if (ProcessFunc)
-		{
-			// Allocate buffer matching function parameter size
-			uint8* ParamsBuffer = (uint8*)FMemory_Alloca(ProcessFunc->ParmsSize);
-			FMemory::Memzero(ParamsBuffer, ProcessFunc->ParmsSize);
-
-			// Copy the struct parameter into the parameter buffer
-			for (TFieldIterator<FProperty> PropIt(ProcessFunc); PropIt; ++PropIt)
-			{
-				if (FStructProperty* StructProp = CastField<FStructProperty>(*PropIt))
-				{
-					StructProp->CopyCompleteValue_InContainer(ParamsBuffer, FoundRow);
-					break;
-				}
-			}
-
-			QuickSlotsWidget->ProcessEvent(ProcessFunc, ParamsBuffer);
+			// All items were successfully ingested into player quickslots
 			return true;
+		}
+		else
+		{
+			// Partially ingested (e.g. slots hit 64 limit), retain leftover count in world
+			ItemCount = RemainingCount;
+			UpdatePileMesh();
+			return false;
 		}
 	}
 

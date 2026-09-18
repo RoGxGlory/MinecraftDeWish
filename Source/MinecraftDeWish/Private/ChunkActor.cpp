@@ -1,20 +1,36 @@
 #include "ChunkActor.h"
 #include "WorldGenerator.h"
+#include "MiningQueueSystem.h"
+#include "BaublesSystem.h"
 #include "Components/PointLightComponent.h"
 
 AChunkActor::AChunkActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
 
+	// Main mesh for solid blocks — full physics collision
 	ProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMesh"));
 	RootComponent = ProceduralMesh;
-
 	ProceduralMesh->bUseAsyncCooking = false;
+	ProceduralMesh->bUseComplexAsSimpleCollision = true;
 	ProceduralMesh->SetCastShadow(true);
 	ProceduralMesh->bAffectDistanceFieldLighting = false;
 	ProceduralMesh->SetCollisionObjectType(ECC_WorldStatic);
 	ProceduralMesh->SetCollisionResponseToAllChannels(ECR_Block);
 	ProceduralMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+	// Separate mesh for non-solid blocks (torches, seeds) — trace-only collision
+	NonSolidMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("NonSolidMesh"));
+	NonSolidMesh->SetupAttachment(RootComponent);
+	NonSolidMesh->bUseAsyncCooking = false;
+	NonSolidMesh->bUseComplexAsSimpleCollision = true;
+	NonSolidMesh->SetCastShadow(true);
+	NonSolidMesh->bAffectDistanceFieldLighting = false;
+	NonSolidMesh->SetCollisionObjectType(ECC_WorldStatic);
+	NonSolidMesh->SetCollisionResponseToAllChannels(ECR_Block);    // Line traces (ECC_WorldStatic) hit this
+	NonSolidMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);        // Players walk through
+	NonSolidMesh->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Overlap); // Physics objects pass through
+	NonSolidMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly); // No physics simulation, trace-only
 }
 
 void AChunkActor::BeginPlay()
@@ -252,9 +268,10 @@ void AChunkActor::AddFace(
 	MeshData.VertexColors.Add(VColor);
 }
 
-void AChunkActor::GenerateMeshData(FChunkMeshData& OutMeshData) const
+void AChunkActor::GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshData& OutNonSolidMeshData) const
 {
-	OutMeshData.Reset();
+	OutSolidMeshData.Reset();
+	OutNonSolidMeshData.Reset();
 
 	for (int32 Z = 0; Z < ChunkHeight; ++Z)
 	{
@@ -274,11 +291,15 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutMeshData) const
 					static_cast<float>(Z) * BlockScale
 				);
 
+				// Determine which mesh buffer to write to based on block solidity
+				const bool bIsNonSolid = FBlockHelpers::IsNonSolidBlock(BlockID);
+				FChunkMeshData& TargetMeshData = bIsNonSolid ? OutNonSolidMeshData : OutSolidMeshData;
+
 				// Special mesh for Torches: crossed vertical diagonal planes
 				if (BlockID == static_cast<uint8>(EBlockType::Torch))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::North) : 36;
-					AddTorchMesh(OutMeshData, BlockPos, Tex);
+					AddTorchMesh(TargetMeshData, BlockPos, Tex);
 					continue;
 				}
 
@@ -287,42 +308,42 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutMeshData) const
 				if (ShouldRenderFace(BlockID, X, Y, Z + 1))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::Top) : 0;
-					AddFace(OutMeshData, BlockPos, EBlockFace::Top, Tex);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::Top, Tex);
 				}
 
 				// Bottom (-Z)
 				if (ShouldRenderFace(BlockID, X, Y, Z - 1))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::Bottom) : 0;
-					AddFace(OutMeshData, BlockPos, EBlockFace::Bottom, Tex);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::Bottom, Tex);
 				}
 
 				// North (+X)
 				if (ShouldRenderFace(BlockID, X + 1, Y, Z))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::North) : 0;
-					AddFace(OutMeshData, BlockPos, EBlockFace::North, Tex);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::North, Tex);
 				}
 
 				// South (-X)
 				if (ShouldRenderFace(BlockID, X - 1, Y, Z))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::South) : 0;
-					AddFace(OutMeshData, BlockPos, EBlockFace::South, Tex);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::South, Tex);
 				}
 
 				// East (+Y)
 				if (ShouldRenderFace(BlockID, X, Y + 1, Z))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::East) : 0;
-					AddFace(OutMeshData, BlockPos, EBlockFace::East, Tex);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::East, Tex);
 				}
 
 				// West (-Y)
 				if (ShouldRenderFace(BlockID, X, Y - 1, Z))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::West) : 0;
-					AddFace(OutMeshData, BlockPos, EBlockFace::West, Tex);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::West, Tex);
 				}
 			}
 		}
@@ -474,24 +495,27 @@ void AChunkActor::ClearTorchLights()
 	TorchLights.Empty();
 }
 
-void AChunkActor::ApplyMeshData(const FChunkMeshData& InMeshData)
+void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FChunkMeshData& InNonSolidMeshData)
 {
+	// Clear mesh sections on both components
 	ProceduralMesh->ClearMeshSection(0);
+	NonSolidMesh->ClearMeshSection(0);
 
-	if (!InMeshData.IsEmpty())
+	// Section 0 on ProceduralMesh: Solid blocks — full physics collision (QueryAndPhysics)
+	if (!InSolidMeshData.IsEmpty())
 	{
 		ProceduralMesh->CreateMeshSection_LinearColor(
 			0,
-			InMeshData.Vertices,
-			InMeshData.Triangles,
-			InMeshData.Normals,
-			InMeshData.UV0,
-			InMeshData.UV1,
+			InSolidMeshData.Vertices,
+			InSolidMeshData.Triangles,
+			InSolidMeshData.Normals,
+			InSolidMeshData.UV0,
+			InSolidMeshData.UV1,
 			TArray<FVector2D>(),
 			TArray<FVector2D>(),
-			InMeshData.VertexColors,
-			InMeshData.Tangents,
-			true // Collision
+			InSolidMeshData.VertexColors,
+			InSolidMeshData.Tangents,
+			true // Generate collision for solid blocks
 		);
 
 		if (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
@@ -500,14 +524,39 @@ void AChunkActor::ApplyMeshData(const FChunkMeshData& InMeshData)
 		}
 	}
 
+	// Section 0 on NonSolidMesh: Non-solid blocks (torches, seeds) — QueryOnly collision
+	// Line traces still hit these for WB_BlockInfo and destroy system, but players walk through them.
+	if (!InNonSolidMeshData.IsEmpty())
+	{
+		NonSolidMesh->CreateMeshSection_LinearColor(
+			0,
+			InNonSolidMeshData.Vertices,
+			InNonSolidMeshData.Triangles,
+			InNonSolidMeshData.Normals,
+			InNonSolidMeshData.UV0,
+			InNonSolidMeshData.UV1,
+			TArray<FVector2D>(),
+			TArray<FVector2D>(),
+			InNonSolidMeshData.VertexColors,
+			InNonSolidMeshData.Tangents,
+			true // Generate collision for trace queries
+		);
+
+		if (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
+		{
+			NonSolidMesh->SetMaterial(0, WorldGenerator->TerrainMaterial);
+		}
+	}
+
 	UpdateTorchLights();
 }
 
 void AChunkActor::UpdateMesh()
 {
-	FChunkMeshData MeshData;
-	GenerateMeshData(MeshData);
-	ApplyMeshData(MeshData);
+	FChunkMeshData SolidMeshData;
+	FChunkMeshData NonSolidMeshData;
+	GenerateMeshData(SolidMeshData, NonSolidMeshData);
+	ApplyMeshData(SolidMeshData, NonSolidMeshData);
 }
 
 void AChunkActor::SetMaterial(UMaterialInterface* Material)
@@ -520,6 +569,46 @@ void AChunkActor::SetMaterial(UMaterialInterface* Material)
 
 int32 AChunkActor::GetHitFaceAtLocation(const FVector& HitLocation) const
 {
+	// Project Face ID Convention (from AC_DestroySystem / BPI_BuildSystem):
+	// Option 0 = Front (+X), Option 1 = Back (-X), Option 2 = Left (-Y), Option 3 = Right (+Y), Option 4 = Top (+Z), Option 5 = Bottom (-Z)
+
+	// Determine incoming ray direction from player camera
+	FVector RayDir = FVector::ZeroVector;
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (PC && PC->PlayerCameraManager)
+	{
+		RayDir = (HitLocation - PC->PlayerCameraManager->GetCameraLocation()).GetSafeNormal();
+	}
+
+	// 6 face outward normals in world space
+	static const FVector FaceNormals[6] = {
+		FVector(1.0f, 0.0f, 0.0f),   // 0 = Front (+X)
+		FVector(-1.0f, 0.0f, 0.0f),  // 1 = Back (-X)
+		FVector(0.0f, -1.0f, 0.0f),  // 2 = Left (-Y)
+		FVector(0.0f, 1.0f, 0.0f),   // 3 = Right (+Y)
+		FVector(0.0f, 0.0f, 1.0f),   // 4 = Top (+Z)
+		FVector(0.0f, 0.0f, -1.0f)   // 5 = Bottom (-Z)
+	};
+
+	if (!RayDir.IsNearlyZero())
+	{
+		// The face that was hit is the one whose outward normal directly opposes the incoming ray (-RayDir)
+		const FVector InvRay = -RayDir;
+		int32 BestFace = 4;
+		float MaxDot = -2.0f;
+		for (int32 i = 0; i < 6; ++i)
+		{
+			const float Dot = FVector::DotProduct(FaceNormals[i], InvRay);
+			if (Dot > MaxDot)
+			{
+				MaxDot = Dot;
+				BestFace = i;
+			}
+		}
+		return BestFace;
+	}
+
+	// Geometric fallback if camera is unavailable
 	const FVector LocalHit = HitLocation - GetActorLocation();
 	const int32 X = FMath::Clamp(FMath::FloorToInt(LocalHit.X / BlockScale), 0, CHUNK_SIZE_X - 1);
 	const int32 Y = FMath::Clamp(FMath::FloorToInt(LocalHit.Y / BlockScale), 0, CHUNK_SIZE_Y - 1);
@@ -538,15 +627,15 @@ int32 AChunkActor::GetHitFaceAtLocation(const FVector& HitLocation) const
 
 	if (AbsZ >= AbsX && AbsZ >= AbsY)
 	{
-		return (Delta.Z > 0.0f) ? 0 : 1; // Top (0) : Bottom (1)
+		return (Delta.Z >= 0.0f) ? 4 : 5; // Top (4) : Bottom (5)
 	}
 	else if (AbsX >= AbsY)
 	{
-		return (Delta.X > 0.0f) ? 2 : 3; // North (+X = 2) : South (-X = 3)
+		return (Delta.X >= 0.0f) ? 0 : 1; // Front (+X = 0) : Back (-X = 1)
 	}
 	else
 	{
-		return (Delta.Y > 0.0f) ? 4 : 5; // East (+Y = 4) : West (-Y = 5)
+		return (Delta.Y <= 0.0f) ? 2 : 3; // Left (-Y = 2) : Right (+Y = 3)
 	}
 }
 
@@ -579,4 +668,515 @@ bool AChunkActor::GetBlockDataAtLocation(const FVector& HitLocation, uint8& OutB
 		(static_cast<float>(Z) + 0.5f) * BlockScale
 	);
 	return OutBlockID != 0;
+}
+
+uint8 AChunkActor::GetTargetedBlockID() const
+{
+	FIntVector TargetCoord = LastTargetedVoxelCoord;
+
+	uint8 BlockID = 0;
+	if (WorldGenerator.IsValid() && TargetCoord.X >= 0)
+	{
+		WorldGenerator->GetVoxelAt(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, BlockID);
+	}
+
+	// If not cached or pointing to Air, do a live raycast from the player's camera
+	if (BlockID == 0 && WorldGenerator.IsValid())
+	{
+		APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+		if (PC && PC->PlayerCameraManager)
+		{
+			const FVector CamStart = PC->PlayerCameraManager->GetCameraLocation();
+			const FVector CamEnd = CamStart + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 6.0f));
+			FHitResult Hit;
+			FCollisionQueryParams QParams;
+			QParams.AddIgnoredActor(PC->GetPawn());
+			if (GetWorld()->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
+			{
+				const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
+				int32 BX, BY, BZ;
+				WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+				TargetCoord = FIntVector(BX, BY, BZ);
+				WorldGenerator->GetVoxelAt(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, BlockID);
+			}
+		}
+	}
+
+	return BlockID;
+}
+
+FName AChunkActor::GetTargetedBlockRowName() const
+{
+	const uint8 BlockID = GetTargetedBlockID();
+	if (BlockID == 0)
+	{
+		return NAME_None;
+	}
+
+	UDataTable* Table = WorldGenerator.IsValid() ? WorldGenerator->BlockDataTable : nullptr;
+	if (!Table)
+	{
+		Table = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/Data/Block_DataTable.Block_DataTable")));
+	}
+
+	if (Table)
+	{
+		const UScriptStruct* RowStruct = Table->GetRowStruct();
+		for (auto It = Table->GetRowMap().CreateConstIterator(); It; ++It)
+		{
+			const uint8* RowData = It.Value();
+			if (!RowData) continue;
+
+			for (TFieldIterator<FIntProperty> PropIt(RowStruct); PropIt; ++PropIt)
+			{
+				if (PropIt->GetName().Contains(TEXT("BlockID"), ESearchCase::IgnoreCase))
+				{
+					if (PropIt->GetPropertyValue_InContainer(RowData) == static_cast<int32>(BlockID))
+					{
+						return It.Key(); // Matches Data Table Row Name, e.g. "Grass", "Dirt", "Stone"
+					}
+				}
+			}
+		}
+	}
+
+	return NAME_None;
+}
+
+void AChunkActor::BreakTargetedBlock()
+{
+	FIntVector TargetCoord = LastTargetedVoxelCoord;
+
+	uint8 BlockAtCoord = 0;
+	if (WorldGenerator.IsValid() && TargetCoord.X >= 0)
+	{
+		WorldGenerator->GetVoxelAt(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, BlockAtCoord);
+	}
+
+	// If not cached or pointing to Air, live raycast from camera
+	if (BlockAtCoord == 0 && WorldGenerator.IsValid())
+	{
+		APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+		if (PC && PC->PlayerCameraManager)
+		{
+			const FVector CamStart = PC->PlayerCameraManager->GetCameraLocation();
+			const FVector CamEnd = CamStart + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 6.0f));
+			FHitResult Hit;
+			FCollisionQueryParams QParams;
+			QParams.AddIgnoredActor(PC->GetPawn());
+			if (GetWorld()->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
+			{
+				const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
+				int32 BX, BY, BZ;
+				WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+				TargetCoord = FIntVector(BX, BY, BZ);
+				WorldGenerator->GetVoxelAt(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, BlockAtCoord);
+			}
+		}
+	}
+
+	if (WorldGenerator.IsValid() && TargetCoord.X >= 0 && BlockAtCoord != 0 && BlockAtCoord != static_cast<uint8>(EBlockType::Bedrock))
+	{
+		uint8 DroppedID = 0;
+		WorldGenerator->BreakBlockAtVoxel(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, DroppedID);
+		LastTargetedVoxelCoord = FIntVector(-1, -1, -1);
+	}
+}
+
+float AChunkActor::GetTargetedBlockDurability() const
+{
+	const uint8 BlockID = GetTargetedBlockID();
+	if (BlockID == 0)
+	{
+		return 0.5f;
+	}
+
+	UDataTable* Table = WorldGenerator.IsValid() ? WorldGenerator->BlockDataTable : nullptr;
+	if (!Table)
+	{
+		Table = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/Data/Block_DataTable.Block_DataTable")));
+	}
+
+	if (Table)
+	{
+		const UScriptStruct* RowStruct = Table->GetRowStruct();
+		for (auto It = Table->GetRowMap().CreateConstIterator(); It; ++It)
+		{
+			const uint8* RowData = It.Value();
+			if (!RowData) continue;
+
+			int32 RowBlockID = -1;
+			double RowDurability = 1.0;
+
+			for (TFieldIterator<FProperty> PropIt(RowStruct); PropIt; ++PropIt)
+			{
+				FProperty* Prop = *PropIt;
+				const FString PropName = Prop->GetName();
+				if (PropName.Contains(TEXT("BlockID"), ESearchCase::IgnoreCase))
+				{
+					if (FIntProperty* IP = CastField<FIntProperty>(Prop))
+						RowBlockID = IP->GetPropertyValue_InContainer(RowData);
+				}
+				else if (PropName.Contains(TEXT("Durability"), ESearchCase::IgnoreCase))
+				{
+					if (FDoubleProperty* DP = CastField<FDoubleProperty>(Prop))
+						RowDurability = DP->GetPropertyValue_InContainer(RowData);
+					else if (FFloatProperty* FP = CastField<FFloatProperty>(Prop))
+						RowDurability = FP->GetPropertyValue_InContainer(RowData);
+				}
+			}
+
+			if (RowBlockID == static_cast<int32>(BlockID))
+			{
+				return FMath::Max(0.05f, static_cast<float>(RowDurability));
+			}
+		}
+	}
+
+	return 1.0f;
+}
+
+float AChunkActor::GetTargetedBlockBreakTime(float MiningForce) const
+{
+	float EffectiveMiningForce = MiningForce;
+
+	// If no force was passed or it's <= 0, query equipped tool from BaublesSystem or fallback to 1.0f (hand)
+	if (EffectiveMiningForce <= 0.0f)
+	{
+		const uint8 BlockID = GetTargetedBlockID();
+		APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+		if (PC && PC->GetPawn())
+		{
+			if (UBaublesSystem* Baubles = PC->GetPawn()->FindComponentByClass<UBaublesSystem>())
+			{
+				EffectiveMiningForce = Baubles->GetBestMiningForce(BlockID);
+			}
+		}
+
+		if (EffectiveMiningForce <= 0.0f)
+		{
+			EffectiveMiningForce = 1.0f;
+		}
+	}
+
+	const float Durability = GetTargetedBlockDurability();
+	return UMiningQueueSystem::CalculateBreakTime(Durability, EffectiveMiningForce);
+}
+
+float AChunkActor::GetTargetedBlockPlayRate(float MiningForce, float TimelineLength) const
+{
+	const float BreakTime = GetTargetedBlockBreakTime(MiningForce);
+	const float Len = FMath::Max(0.01f, TimelineLength);
+	return Len / BreakTime;
+}
+
+UTexture2D* AChunkActor::GetBlockIconTexture(int32 InBlockID)
+{
+	// Texture path mappings must match EBlockType enum values exactly
+	FString TexturePath;
+	switch (InBlockID)
+	{
+	case 1:  TexturePath = TEXT("/Game/Textures/Blocks/dirt.dirt"); break;                                   // Dirt
+	case 2:  TexturePath = TEXT("/Game/Textures/Blocks/grass_block_side.grass_block_side"); break;           // Grass
+	case 3:  TexturePath = TEXT("/Game/Textures/Blocks/cobblestone.cobblestone"); break;                     // Cobblestone
+	case 4:  TexturePath = TEXT("/Game/Textures/Blocks/stone.stone"); break;                                 // Stone
+	case 5:  TexturePath = TEXT("/Game/Textures/Blocks/oak_log.oak_log"); break;                             // Wood Log
+	case 6:  TexturePath = TEXT("/Game/Textures/Blocks/oak_planks.oak_planks"); break;                       // Wood Planks
+	case 7:  TexturePath = TEXT("/Game/Textures/Blocks/iron_ore.iron_ore"); break;                           // Iron Ore
+	case 8:  TexturePath = TEXT("/Game/Textures/Blocks/iron_block.iron_block"); break;                       // Iron Block
+	case 9:  TexturePath = TEXT("/Game/Textures/Blocks/gold_ore.gold_ore"); break;                           // Gold Ore
+	case 10: TexturePath = TEXT("/Game/Textures/Blocks/gold_block.gold_block"); break;                       // Gold Block
+	case 11: TexturePath = TEXT("/Game/Textures/Blocks/diamond_ore.diamond_ore"); break;                     // Diamond Ore
+	case 12: TexturePath = TEXT("/Game/Textures/Blocks/diamond_block.diamond_block"); break;                 // Diamond Block
+	case 13: TexturePath = TEXT("/Game/Textures/Blocks/emerald_ore.emerald_ore"); break;                     // Emerald Ore
+	case 14: TexturePath = TEXT("/Game/Textures/Blocks/emerald_block.emerald_block"); break;                 // Emerald Block
+	case 15: TexturePath = TEXT("/Game/Textures/Blocks/crafting_table_front.crafting_table_front"); break;   // Crafting Table
+	case 16: TexturePath = TEXT("/Game/Textures/Blocks/furnace_front.furnace_front"); break;                 // Furnace
+	case 17: TexturePath = TEXT("/Game/Textures/Blocks/leaves.leaves"); break;                               // Leaves
+	case 18: TexturePath = TEXT("/Game/Textures/Blocks/sand.sand"); break;                                   // Sand
+	case 19: TexturePath = TEXT("/Game/Textures/Blocks/torch.torch"); break;                                 // Torch
+	case 20: TexturePath = TEXT("/Game/Textures/Blocks/barrel_side.barrel_side"); break;                     // Barrel
+	case 21: TexturePath = TEXT("/Game/Textures/Blocks/glass.glass"); break;                                 // Glass
+	case 22: TexturePath = TEXT("/Game/Textures/Blocks/oak_planks.oak_planks"); break;                       // Fence
+	case 23: TexturePath = TEXT("/Game/Textures/Blocks/oak_planks.oak_planks"); break;                       // Fence Door
+	case 24: TexturePath = TEXT("/Game/Textures/Blocks/dark_oak_door_bottom.dark_oak_door_bottom"); break;   // Door
+	case 25: TexturePath = TEXT("/Game/Textures/Blocks/stone.stone"); break;                                 // Bedrock
+	case 26: TexturePath = TEXT("/Game/Textures/Blocks/glass.glass"); break;                                 // Water
+	case 27: TexturePath = TEXT("/Game/Textures/Blocks/coal_ore.coal_ore"); break;                           // Coal Ore
+	default:
+		TexturePath = TEXT("/Game/Textures/Blocks/dirt.dirt");
+		break;
+	}
+
+	return Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *TexturePath));
+}
+
+UTexture2D* AChunkActor::GetBlockIconFromSlice(int32 TextureSliceIndex)
+{
+	static const TArray<FString> SliceTextureNames = {
+		TEXT("barrel_bottom"),
+		TEXT("barrel_side"),
+		TEXT("barrel_top"),
+		TEXT("barrel_top_open"),
+		TEXT("coal_block"),
+		TEXT("coal_ore"),
+		TEXT("cobblestone"),
+		TEXT("crafting_table_front"),
+		TEXT("crafting_table_side"),
+		TEXT("crafting_table_top"),
+		TEXT("dark_oak_door_bottom"),
+		TEXT("dark_oak_door_top"),
+		TEXT("diamond_block"),
+		TEXT("diamond_ore"),
+		TEXT("dirt"),
+		TEXT("emerald_block"),
+		TEXT("emerald_ore"),
+		TEXT("farmland"),
+		TEXT("farmland_moist"),
+		TEXT("furnace_front"),
+		TEXT("furnace_front_on"),
+		TEXT("furnace_side"),
+		TEXT("furnace_top"),
+		TEXT("glass"),
+		TEXT("gold_block"),
+		TEXT("gold_ore"),
+		TEXT("grass_block_side"),
+		TEXT("grass_block_top"),
+		TEXT("iron_block"),
+		TEXT("iron_ore"),
+		TEXT("leaves"),
+		TEXT("oak_log"),
+		TEXT("oak_log_top"),
+		TEXT("oak_planks"),
+		TEXT("sand"),
+		TEXT("stone"),
+		TEXT("torch")
+	};
+
+	FString Name = TEXT("dirt");
+	if (SliceTextureNames.IsValidIndex(TextureSliceIndex))
+	{
+		Name = SliceTextureNames[TextureSliceIndex];
+	}
+
+	const FString Path = FString::Printf(TEXT("/Game/Textures/Blocks/%s.%s"), *Name, *Name);
+	return Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *Path));
+}
+
+void AChunkActor::ProcessEvent(UFunction* Function, void* Parms)
+{
+	if (Function)
+	{
+		const FString FuncNameStr = Function->GetName();
+
+		if (FuncNameStr.Contains(TEXT("GetHitFace"), ESearchCase::IgnoreCase))
+		{
+			FVector HitLoc = LastTargetedHitLocation;
+			for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
+			{
+				FProperty* Prop = *PropIt;
+				if (FStructProperty* SP = CastField<FStructProperty>(Prop))
+				{
+					if (SP->Struct == TBaseStructure<FVector>::Get())
+					{
+						HitLoc = *(FVector*)Prop->ContainerPtrToValuePtr<void>(Parms);
+					}
+				}
+			}
+
+			const int32 FaceID = GetHitFaceAtLocation(HitLoc);
+			LastTargetedHitLocation = HitLoc;
+
+			// Project Outward Normal for the hit face:
+			// Option 0 = Front (+X), Option 1 = Back (-X), Option 2 = Left (-Y), Option 3 = Right (+Y), Option 4 = Top (+Z), Option 5 = Bottom (-Z)
+			FVector OutwardNormal = FVector::UpVector;
+			switch (FaceID)
+			{
+			case 0: OutwardNormal = FVector(1.0f, 0.0f, 0.0f); break;   // Front (+X)
+			case 1: OutwardNormal = FVector(-1.0f, 0.0f, 0.0f); break;  // Back (-X)
+			case 2: OutwardNormal = FVector(0.0f, -1.0f, 0.0f); break;  // Left (-Y)
+			case 3: OutwardNormal = FVector(0.0f, 1.0f, 0.0f); break;   // Right (+Y)
+			case 4: OutwardNormal = FVector(0.0f, 0.0f, 1.0f); break;   // Top (+Z)
+			case 5: OutwardNormal = FVector(0.0f, 0.0f, -1.0f); break;  // Bottom (-Z)
+			default: OutwardNormal = FVector(0.0f, 0.0f, 1.0f); break;
+			}
+
+			if (WorldGenerator.IsValid())
+			{
+				// Step opposite to outward normal (into the block interior)
+				const FVector SamplePos = HitLoc - (OutwardNormal * (BlockScale * 0.25f));
+				int32 BX, BY, BZ;
+				WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+
+				uint8 TargetedBlockID = 0;
+				if (WorldGenerator->GetVoxelAt(BX, BY, BZ, TargetedBlockID) && TargetedBlockID != 0)
+				{
+					LastTargetedVoxelCoord = FIntVector(BX, BY, BZ);
+				}
+				else
+				{
+					// Fallback: camera line trace
+					APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+					if (PC && PC->PlayerCameraManager)
+					{
+						const FVector CamStart = PC->PlayerCameraManager->GetCameraLocation();
+						const FVector CamEnd = CamStart + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 6.0f));
+						FHitResult Hit;
+						FCollisionQueryParams QParams;
+						QParams.AddIgnoredActor(PC->GetPawn());
+						if (GetWorld()->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
+						{
+							const FVector InsidePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
+							int32 FBX, FBY, FBZ;
+							WorldGenerator->WorldLocationToVoxelCoord(InsidePos, FBX, FBY, FBZ);
+							LastTargetedVoxelCoord = FIntVector(FBX, FBY, FBZ);
+						}
+					}
+				}
+			}
+
+			for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
+			{
+				FProperty* Prop = *PropIt;
+				if (FIntProperty* IP = CastField<FIntProperty>(Prop))
+				{
+					if (Prop->HasAnyPropertyFlags(CPF_OutParm | CPF_ReturnParm))
+					{
+						*(int32*)Prop->ContainerPtrToValuePtr<void>(Parms) = FaceID;
+					}
+				}
+				else if (FByteProperty* BP = CastField<FByteProperty>(Prop))
+				{
+					if (Prop->HasAnyPropertyFlags(CPF_OutParm | CPF_ReturnParm))
+					{
+						*(uint8*)Prop->ContainerPtrToValuePtr<void>(Parms) = static_cast<uint8>(FaceID);
+					}
+				}
+			}
+			return;
+		}
+		else if (FuncNameStr.Contains(TEXT("GetBlockData"), ESearchCase::IgnoreCase))
+		{
+			uint8 TargetBlockID = 0;
+			if (WorldGenerator.IsValid() && LastTargetedVoxelCoord.X >= 0)
+			{
+				WorldGenerator->GetVoxelAt(LastTargetedVoxelCoord.X, LastTargetedVoxelCoord.Y, LastTargetedVoxelCoord.Z, TargetBlockID);
+			}
+
+			// If cached voxel is air or uninitialized, perform live camera line trace
+			if (TargetBlockID == 0 && WorldGenerator.IsValid())
+			{
+				APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+				if (PC && PC->PlayerCameraManager)
+				{
+					const FVector CamStart = PC->PlayerCameraManager->GetCameraLocation();
+					const FVector CamEnd = CamStart + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 6.0f));
+					FHitResult Hit;
+					FCollisionQueryParams QParams;
+					QParams.AddIgnoredActor(PC->GetPawn());
+					if (GetWorld()->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
+					{
+						const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
+						int32 BX, BY, BZ;
+						WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+						LastTargetedVoxelCoord = FIntVector(BX, BY, BZ);
+						LastTargetedHitLocation = Hit.ImpactPoint;
+						WorldGenerator->GetVoxelAt(LastTargetedVoxelCoord.X, LastTargetedVoxelCoord.Y, LastTargetedVoxelCoord.Z, TargetBlockID);
+					}
+				}
+			}
+
+			UDataTable* Table = WorldGenerator.IsValid() ? WorldGenerator->BlockDataTable : nullptr;
+			if (!Table)
+			{
+				Table = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/Data/Block_DataTable.Block_DataTable")));
+			}
+
+			if (Table && TargetBlockID != 0)
+			{
+				const UScriptStruct* RowStruct = Table->GetRowStruct();
+				const uint8* FoundRow = nullptr;
+
+				for (auto It = Table->GetRowMap().CreateConstIterator(); It; ++It)
+				{
+					const uint8* RowData = It.Value();
+					if (!RowData) continue;
+
+					for (TFieldIterator<FProperty> PropIt(RowStruct); PropIt; ++PropIt)
+					{
+						FProperty* Prop = *PropIt;
+						if (Prop->GetName().Contains(TEXT("BlockID"), ESearchCase::IgnoreCase))
+						{
+							int32 RowBlockID = -1;
+							if (FIntProperty* IP = CastField<FIntProperty>(Prop))
+								RowBlockID = IP->GetPropertyValue_InContainer(RowData);
+							else if (FByteProperty* BP = CastField<FByteProperty>(Prop))
+								RowBlockID = BP->GetPropertyValue_InContainer(RowData);
+
+							if (RowBlockID == static_cast<int32>(TargetBlockID))
+							{
+								FoundRow = RowData;
+								break;
+							}
+						}
+					}
+					if (FoundRow) break;
+				}
+
+				if (FoundRow)
+				{
+					for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
+					{
+						FProperty* Prop = *PropIt;
+						if (FStructProperty* SP = CastField<FStructProperty>(Prop))
+						{
+							if (Prop->HasAnyPropertyFlags(CPF_OutParm | CPF_ReturnParm))
+							{
+								SP->CopyCompleteValue(Prop->ContainerPtrToValuePtr<void>(Parms), FoundRow);
+								break;
+							}
+						}
+					}
+				}
+			}
+			return;
+		}
+		else if (FuncNameStr.Contains(TEXT("StartBreak"), ESearchCase::IgnoreCase))
+		{
+			// Ensure LastTargetedVoxelCoord is valid and points to a solid block
+			uint8 TargetBlock = 0;
+			if (WorldGenerator.IsValid() && LastTargetedVoxelCoord.X >= 0)
+			{
+				WorldGenerator->GetVoxelAt(LastTargetedVoxelCoord.X, LastTargetedVoxelCoord.Y, LastTargetedVoxelCoord.Z, TargetBlock);
+			}
+
+			if (TargetBlock == 0 && WorldGenerator.IsValid())
+			{
+				APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+				if (PC && PC->PlayerCameraManager)
+				{
+					const FVector CamStart = PC->PlayerCameraManager->GetCameraLocation();
+					const FVector CamEnd = CamStart + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 6.0f));
+					FHitResult Hit;
+					FCollisionQueryParams QParams;
+					QParams.AddIgnoredActor(PC->GetPawn());
+					if (GetWorld()->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
+					{
+						const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
+						int32 BX, BY, BZ;
+						WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+						LastTargetedVoxelCoord = FIntVector(BX, BY, BZ);
+						LastTargetedHitLocation = Hit.ImpactPoint;
+					}
+				}
+			}
+
+			// Forward to BP_ChunkActor's EventGraph so it receives Event StartBreak(MiningForce),
+			// waits for GetTargetedBlockBreakTime duration, and calls BreakTargetedBlock()!
+			Super::ProcessEvent(Function, Parms);
+			return;
+		}
+	}
+
+	Super::ProcessEvent(Function, Parms);
 }

@@ -1,6 +1,8 @@
 #include "WorldGenerator.h"
 #include "ChunkActor.h"
 #include "BlockItemPickup.h"
+#include "BlockHighlightActor.h"
+#include "UObject/Interface.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
@@ -10,11 +12,17 @@
 #include "Misc/FileHelper.h"
 #include "Serialization/BufferArchive.h"
 #include "Serialization/MemoryReader.h"
+#include "BaublesSystem.h"
 
 AWorldGenerator::AWorldGenerator()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickInterval = 0.05f; // Tick 20 times per second for streaming efficiency
+
+	MiningQueueSystem = CreateDefaultSubobject<UMiningQueueSystem>(TEXT("MiningQueueSystem"));
+	CraftingSmeltingSystem = CreateDefaultSubobject<UCraftingSmeltingSystem>(TEXT("CraftingSmeltingSystem"));
+	DayNightCycleSystem = CreateDefaultSubobject<UDayNightCycleSystem>(TEXT("DayNightCycleSystem"));
+	MobSpawnerSystem = CreateDefaultSubobject<UMobSpawnerSystem>(TEXT("MobSpawnerSystem"));
 }
 
 void AWorldGenerator::BeginPlay()
@@ -32,6 +40,28 @@ void AWorldGenerator::BeginPlay()
 
 	Noise.SetSeed(WorldSeed);
 	InitializeBlockCache();
+	RegisterChunkActorInterfaces();
+
+	if (!ChunkActorClass)
+	{
+		ChunkActorClass = LoadClass<AChunkActor>(nullptr, TEXT("/Game/General_Blueprints/Blocks/BP_ChunkActor.BP_ChunkActor_C"));
+		if (!ChunkActorClass)
+		{
+			ChunkActorClass = LoadClass<AChunkActor>(nullptr, TEXT("/Game/Blueprints/BP_ChunkActor.BP_ChunkActor_C"));
+		}
+		if (!ChunkActorClass)
+		{
+			ChunkActorClass = LoadClass<AChunkActor>(nullptr, TEXT("/Game/BP_ChunkActor.BP_ChunkActor_C"));
+		}
+		if (ChunkActorClass)
+		{
+			UE_LOG(LogTemp, Log, TEXT("WorldGenerator: Auto-loaded BP_ChunkActor class: %s"), *ChunkActorClass->GetName());
+		}
+	}
+
+	FActorSpawnParameters HighlightParams;
+	HighlightParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	BlockHighlightActor = GetWorld()->SpawnActor<ABlockHighlightActor>(ABlockHighlightActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, HighlightParams);
 
 	WorldSavePath = FPaths::ProjectSavedDir() / TEXT("SaveGames") / FString::Printf(TEXT("World_%d"), WorldSeed);
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
@@ -114,6 +144,32 @@ void AWorldGenerator::Tick(float DeltaTime)
 	}
 
 	ProcessGenerationQueue();
+	UpdateTargetBlockHighlight();
+	EnsureDestroySystemConfigured();
+
+	// Update active concurrent mining queue via modular subsystem
+	if (MiningQueueSystem)
+	{
+		TArray<FIntVector> CompletedVoxels;
+		MiningQueueSystem->TickQueue(DeltaTime, CompletedVoxels);
+
+		for (const FIntVector& Coord : CompletedVoxels)
+		{
+			uint8 DroppedID = 0;
+			BreakBlockAtVoxel(Coord.X, Coord.Y, Coord.Z, DroppedID);
+		}
+
+		ActiveMiningTasks = MiningQueueSystem->GetActiveMiningTasks();
+	}
+
+	// Update furnace smelting timers via modular subsystem
+	if (CraftingSmeltingSystem)
+	{
+		CraftingSmeltingSystem->TickFurnace(DeltaTime);
+		FurnaceBurnTimeRemaining = CraftingSmeltingSystem->FurnaceBurnTimeRemaining;
+		FurnaceTotalBurnTime = CraftingSmeltingSystem->FurnaceTotalBurnTime;
+		FurnaceSmeltProgress = CraftingSmeltingSystem->FurnaceSmeltProgress;
+	}
 }
 
 void AWorldGenerator::InitializeBlockCache()
@@ -525,183 +581,12 @@ int32 AWorldGenerator::GetTerrainHeight(int32 WorldX, int32 WorldY, EBiomeType B
 
 void AWorldGenerator::GenerateTree(AChunkActor* Chunk, int32 LocalX, int32 LocalY, int32 SurfaceZ, EBiomeType Biome)
 {
-	const int32 TrunkHeight = (Biome == EBiomeType::HorrorForest) ? 6 : 5;
-
-	// Trunk
-	for (int32 Z = 1; Z <= TrunkHeight; ++Z)
-	{
-		const int32 BlockZ = SurfaceZ + Z;
-		if (BlockZ < ChunkHeight)
-		{
-			Chunk->SetBlock(LocalX, LocalY, BlockZ, static_cast<uint8>(EBlockType::Wood_Log));
-		}
-	}
-
-	// Leaves for standard forest / plains
-	if (Biome != EBiomeType::HorrorForest)
-	{
-		const int32 LeafStartZ = SurfaceZ + TrunkHeight - 2;
-		const int32 LeafEndZ = SurfaceZ + TrunkHeight + 1;
-
-		for (int32 Z = LeafStartZ; Z <= LeafEndZ; ++Z)
-		{
-			const int32 Radius = (Z >= SurfaceZ + TrunkHeight) ? 1 : 2;
-			for (int32 Dx = -Radius; Dx <= Radius; ++Dx)
-			{
-				for (int32 Dy = -Radius; Dy <= Radius; ++Dy)
-				{
-					const int32 Tx = LocalX + Dx;
-					const int32 Ty = LocalY + Dy;
-
-					// Classic Minecraft rounded canopy: omit the 4 outer corners on radius 2 layers
-					if (Radius > 1 && FMath::Abs(Dx) == Radius && FMath::Abs(Dy) == Radius)
-					{
-						continue;
-					}
-
-					if (Chunk->IsValidCoord(Tx, Ty, Z))
-					{
-						if (Chunk->GetBlock(Tx, Ty, Z) == static_cast<uint8>(EBlockType::Air))
-						{
-							Chunk->SetBlock(Tx, Ty, Z, static_cast<uint8>(EBlockType::Leaves));
-						}
-					}
-				}
-			}
-		}
-	}
-	else
-	{
-		// Horror Forest: Spooky dead branch extensions instead of green leaves
-		const int32 TopZ = SurfaceZ + TrunkHeight;
-		if (Chunk->IsValidCoord(LocalX + 1, LocalY, TopZ))
-			Chunk->SetBlock(LocalX + 1, LocalY, TopZ, static_cast<uint8>(EBlockType::Wood_Log));
-		if (Chunk->IsValidCoord(LocalX - 1, LocalY, TopZ))
-			Chunk->SetBlock(LocalX - 1, LocalY, TopZ, static_cast<uint8>(EBlockType::Wood_Log));
-		if (Chunk->IsValidCoord(LocalX, LocalY + 1, TopZ + 1))
-			Chunk->SetBlock(LocalX, LocalY + 1, TopZ + 1, static_cast<uint8>(EBlockType::Wood_Log));
-	}
+	FVoxelStructureGenerator::GenerateTree(Chunk, LocalX, LocalY, SurfaceZ, ChunkHeight, Biome);
 }
 
 void AWorldGenerator::GenerateVillageHouse(AChunkActor* Chunk, int32 CenterX, int32 CenterY, int32 SurfaceZ)
 {
-	const int32 MinX = CenterX - 2;
-	const int32 MaxX = CenterX + 2;
-	const int32 MinY = CenterY - 2;
-	const int32 MaxY = CenterY + 2;
-	const int32 WallHeight = 4;
-
-	// 1. Cobblestone Floor at SurfaceZ
-	for (int32 X = MinX; X <= MaxX; ++X)
-	{
-		for (int32 Y = MinY; Y <= MaxY; ++Y)
-		{
-			if (Chunk->IsValidCoord(X, Y, SurfaceZ))
-			{
-				Chunk->SetBlock(X, Y, SurfaceZ, static_cast<uint8>(EBlockType::Cobblestone));
-			}
-		}
-	}
-
-	// 2. Walls, Corner Logs, Windows, and Doorway
-	for (int32 H = 1; H <= WallHeight; ++H)
-	{
-		const int32 Z = SurfaceZ + H;
-		if (Z >= ChunkHeight) break;
-
-		for (int32 X = MinX; X <= MaxX; ++X)
-		{
-			for (int32 Y = MinY; Y <= MaxY; ++Y)
-			{
-				const bool bIsCorner = (X == MinX || X == MaxX) && (Y == MinY || Y == MaxY);
-				const bool bIsWall = (X == MinX || X == MaxX || Y == MinY || Y == MaxY);
-
-				if (bIsCorner)
-				{
-					if (Chunk->IsValidCoord(X, Y, Z))
-					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Wood_Log));
-					}
-				}
-				else if (bIsWall)
-				{
-					// Doorway opening on South wall (Y == MinY) at X == CenterX for H == 1, 2
-					if (Y == MinY && X == CenterX && (H == 1 || H == 2))
-					{
-						if (Chunk->IsValidCoord(X, Y, Z))
-						{
-							Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Air));
-						}
-					}
-					// Glass Windows at H == 2 on East and West walls
-					else if (H == 2 && (X == MinX || X == MaxX) && Y == CenterY)
-					{
-						if (Chunk->IsValidCoord(X, Y, Z))
-						{
-							Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Glass));
-						}
-					}
-					else
-					{
-						// Wood Planks wall
-						if (Chunk->IsValidCoord(X, Y, Z))
-						{
-							Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Wood_Planks));
-						}
-					}
-				}
-				else
-				{
-					// Hollow Interior Air
-					if (Chunk->IsValidCoord(X, Y, Z))
-					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Air));
-					}
-				}
-			}
-		}
-	}
-
-	// 3. Cobblestone Roof
-	const int32 RoofZ = SurfaceZ + WallHeight + 1;
-	if (RoofZ < ChunkHeight)
-	{
-		for (int32 X = MinX - 1; X <= MaxX + 1; ++X)
-		{
-			for (int32 Y = MinY - 1; Y <= MaxY + 1; ++Y)
-			{
-				if (Chunk->IsValidCoord(X, Y, RoofZ))
-				{
-					Chunk->SetBlock(X, Y, RoofZ, static_cast<uint8>(EBlockType::Cobblestone));
-				}
-			}
-		}
-	}
-
-	// 4. Interior Furniture: Crafting Table, Furnace, Torch
-	const int32 FloorZ = SurfaceZ + 1;
-	if (Chunk->IsValidCoord(MinX + 1, MaxY - 1, FloorZ))
-	{
-		Chunk->SetBlock(MinX + 1, MaxY - 1, FloorZ, static_cast<uint8>(EBlockType::Crafting_Table));
-	}
-	if (Chunk->IsValidCoord(MaxX - 1, MaxY - 1, FloorZ))
-	{
-		Chunk->SetBlock(MaxX - 1, MaxY - 1, FloorZ, static_cast<uint8>(EBlockType::Furnace));
-	}
-	if (Chunk->IsValidCoord(CenterX, CenterY, SurfaceZ + 3))
-	{
-		Chunk->SetBlock(CenterX, CenterY, SurfaceZ + 3, static_cast<uint8>(EBlockType::Torch));
-	}
-
-	// 5. Cobblestone walkway outside the door
-	for (int32 Step = 1; Step <= 3; ++Step)
-	{
-		const int32 PathY = MinY - Step;
-		if (Chunk->IsValidCoord(CenterX, PathY, SurfaceZ))
-		{
-			Chunk->SetBlock(CenterX, PathY, SurfaceZ, static_cast<uint8>(EBlockType::Cobblestone));
-		}
-	}
+	FVoxelStructureGenerator::GenerateVillageHouse(Chunk, CenterX, CenterY, SurfaceZ, ChunkHeight);
 }
 
 void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
@@ -918,11 +803,8 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 	LoadChunkDelta(Chunk);
 }
 
-bool AWorldGenerator::BreakBlock(const FVector& WorldLocation, uint8& OutDroppedBlockID)
+bool AWorldGenerator::BreakBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, uint8& OutDroppedBlockID)
 {
-	int32 VoxelX, VoxelY, VoxelZ;
-	WorldLocationToVoxelCoord(WorldLocation, VoxelX, VoxelY, VoxelZ);
-
 	const int32 ChunkX = FMath::FloorToInt(static_cast<float>(VoxelX) / static_cast<float>(CHUNK_SIZE_X));
 	const int32 ChunkY = FMath::FloorToInt(static_cast<float>(VoxelY) / static_cast<float>(CHUNK_SIZE_Y));
 
@@ -936,7 +818,7 @@ bool AWorldGenerator::BreakBlock(const FVector& WorldLocation, uint8& OutDropped
 
 			OutDroppedBlockID = (*FoundChunk)->GetBlock(LocalX, LocalY, VoxelZ);
 
-			// Bedrock (25) is indestructible like Minecraft
+			// Bedrock (25) and Air (0) cannot be broken
 			if (OutDroppedBlockID == static_cast<uint8>(EBlockType::Bedrock) || OutDroppedBlockID == static_cast<uint8>(EBlockType::Air))
 			{
 				return false;
@@ -970,13 +852,51 @@ bool AWorldGenerator::BreakBlock(const FVector& WorldLocation, uint8& OutDropped
 			}
 
 			SaveChunkDelta(*FoundChunk);
-			SpawnBlockItemDrop(WorldLocation, OutDroppedBlockID);
+
+			const FVector VoxelCenter(
+				(static_cast<float>(VoxelX) + 0.5f) * BlockScale,
+				(static_cast<float>(VoxelY) + 0.5f) * BlockScale,
+				(static_cast<float>(VoxelZ) + 0.5f) * BlockScale
+			);
+			SpawnBlockItemDrop(VoxelCenter, OutDroppedBlockID);
+
+			// Consume durability from the appropriate equipped tool in Baubles
+			APlayerController* PC = GetWorld()->GetFirstPlayerController();
+			if (PC && PC->GetPawn())
+			{
+				if (UBaublesSystem* Baubles = PC->GetPawn()->FindComponentByClass<UBaublesSystem>())
+				{
+					Baubles->ConsumeToolDurability(OutDroppedBlockID);
+				}
+			}
+
+			// If block above is a Torch, pop it off since it can no longer rest on air
+			if (VoxelZ + 1 < ChunkHeight)
+			{
+				uint8 AboveBlockID = 0;
+				if (GetVoxelAt(VoxelX, VoxelY, VoxelZ + 1, AboveBlockID))
+				{
+					if (AboveBlockID == static_cast<uint8>(EBlockType::Torch) || AboveBlockID == 19)
+					{
+						uint8 UnusedDropped = 0;
+						BreakBlockAtVoxel(VoxelX, VoxelY, VoxelZ + 1, UnusedDropped);
+					}
+				}
+			}
+
 			return true;
 		}
 	}
 
 	OutDroppedBlockID = 0;
 	return false;
+}
+
+bool AWorldGenerator::BreakBlock(const FVector& WorldLocation, uint8& OutDroppedBlockID)
+{
+	int32 VoxelX, VoxelY, VoxelZ;
+	WorldLocationToVoxelCoord(WorldLocation, VoxelX, VoxelY, VoxelZ);
+	return BreakBlockAtVoxel(VoxelX, VoxelY, VoxelZ, OutDroppedBlockID);
 }
 
 void AWorldGenerator::SpawnBlockItemDrop(const FVector& WorldLocation, uint8 DroppedBlockID)
@@ -1012,6 +932,35 @@ bool AWorldGenerator::PlaceBlock(const FVector& WorldLocation, uint8 BlockID)
 	WorldLocationToVoxelCoord(WorldLocation, VoxelX, VoxelY, VoxelZ);
 
 	if (VoxelZ < 0 || VoxelZ >= ChunkHeight) return false;
+
+	// Torch constraint: cannot be placed on air or non-solid blocks
+	if (BlockID == static_cast<uint8>(EBlockType::Torch) || BlockID == 19)
+	{
+		if (VoxelZ <= 0)
+		{
+			return false;
+		}
+
+		uint8 GroundBlockID = 0;
+		if (!GetVoxelAt(VoxelX, VoxelY, VoxelZ - 1, GroundBlockID))
+		{
+			return false;
+		}
+
+		if (GroundBlockID == static_cast<uint8>(EBlockType::Air) ||
+			GroundBlockID == static_cast<uint8>(EBlockType::Torch) ||
+			GroundBlockID == 19)
+		{
+			return false;
+		}
+	}
+
+	// Do not place inside already solid voxels
+	uint8 ExistingBlock = 0;
+	if (GetVoxelAt(VoxelX, VoxelY, VoxelZ, ExistingBlock) && ExistingBlock != static_cast<uint8>(EBlockType::Air))
+	{
+		return false;
+	}
 
 	const int32 ChunkX = FMath::FloorToInt(static_cast<float>(VoxelX) / static_cast<float>(CHUNK_SIZE_X));
 	const int32 ChunkY = FMath::FloorToInt(static_cast<float>(VoxelY) / static_cast<float>(CHUNK_SIZE_Y));
@@ -1202,4 +1151,400 @@ void AWorldGenerator::SaveWorld()
 			SaveChunkDelta(Pair.Value);
 		}
 	}
+}
+
+void AWorldGenerator::RegisterChunkActorInterfaces()
+{
+	UClass* BuildInterface = Cast<UClass>(StaticLoadObject(UClass::StaticClass(), nullptr, TEXT("/Game/Interfaces/BPI_BuildSystem.BPI_BuildSystem_C")));
+	UClass* DestroyInterface = Cast<UClass>(StaticLoadObject(UClass::StaticClass(), nullptr, TEXT("/Game/Interfaces/BPI_Destroyable.BPI_Destroyable_C")));
+
+	UE_LOG(LogTemp, Log, TEXT("WorldGenerator: RegisterChunkActorInterfaces BuildInterface=%s, DestroyInterface=%s"),
+		BuildInterface ? *BuildInterface->GetName() : TEXT("NULL"),
+		DestroyInterface ? *DestroyInterface->GetName() : TEXT("NULL"));
+
+	UClass* ChunkClass = AChunkActor::StaticClass();
+	if (!ChunkClass) return;
+
+	if (BuildInterface && !ChunkClass->ImplementsInterface(BuildInterface))
+	{
+		ChunkClass->Interfaces.Add(FImplementedInterface(BuildInterface, 0, true));
+	}
+	if (DestroyInterface && !ChunkClass->ImplementsInterface(DestroyInterface))
+	{
+		ChunkClass->Interfaces.Add(FImplementedInterface(DestroyInterface, 0, true));
+	}
+
+	if (BuildInterface)
+	{
+		for (TFieldIterator<UFunction> FuncIt(BuildInterface); FuncIt; ++FuncIt)
+		{
+			ChunkClass->AddFunctionToFunctionMap(*FuncIt, FuncIt->GetFName());
+		}
+	}
+	if (DestroyInterface)
+	{
+		for (TFieldIterator<UFunction> FuncIt(DestroyInterface); FuncIt; ++FuncIt)
+		{
+			ChunkClass->AddFunctionToFunctionMap(*FuncIt, FuncIt->GetFName());
+		}
+	}
+}
+
+void AWorldGenerator::EnsureDestroySystemConfigured()
+{
+	if (bDestroySystemConfigured)
+	{
+		return;
+	}
+
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC || !PC->GetPawn())
+	{
+		return;
+	}
+
+	for (UActorComponent* Comp : PC->GetPawn()->GetComponents())
+	{
+		if (Comp && Comp->GetClass()->GetName().Contains(TEXT("DestroySystem")))
+		{
+			if (FProperty* DistProp = Comp->GetClass()->FindPropertyByName(TEXT("InteractionDistance")))
+			{
+				if (FFloatProperty* FP = CastField<FFloatProperty>(DistProp))
+				{
+					FP->SetPropertyValue_InContainer(Comp, BlockScale * 6.0f);
+				}
+				else if (FDoubleProperty* DP = CastField<FDoubleProperty>(DistProp))
+				{
+					DP->SetPropertyValue_InContainer(Comp, static_cast<double>(BlockScale * 6.0f));
+				}
+			}
+			if (FProperty* TimerProp = Comp->GetClass()->FindPropertyByName(TEXT("TimeBeforeNextLTCheck")))
+			{
+				if (FFloatProperty* FP = CastField<FFloatProperty>(TimerProp))
+				{
+					FP->SetPropertyValue_InContainer(Comp, 0.02f);
+				}
+				else if (FDoubleProperty* DP = CastField<FDoubleProperty>(TimerProp))
+				{
+					DP->SetPropertyValue_InContainer(Comp, 0.02);
+				}
+			}
+			bDestroySystemConfigured = true;
+			UE_LOG(LogTemp, Log, TEXT("WorldGenerator: Configured AC_DestroySystem InteractionDistance=%.0f, TimeBeforeNextLTCheck=0.02s"), BlockScale * 6.0f);
+			break;
+		}
+	}
+}
+
+void AWorldGenerator::UpdateTargetBlockHighlight()
+{
+	if (!BlockHighlightActor)
+	{
+		return;
+	}
+
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC)
+	{
+		BlockHighlightActor->HideHighlight();
+		return;
+	}
+
+	APlayerCameraManager* Camera = PC->PlayerCameraManager;
+	if (!Camera)
+	{
+		BlockHighlightActor->HideHighlight();
+		return;
+	}
+
+	const FVector Start = Camera->GetCameraLocation();
+	const FVector End = Start + (Camera->GetActorForwardVector() * (BlockScale * 5.5f));
+
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	Params.AddIgnoredActor(BlockHighlightActor);
+	if (PC->GetPawn())
+	{
+		Params.AddIgnoredActor(PC->GetPawn());
+	}
+
+	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params))
+	{
+		if (Hit.GetActor() && Hit.GetActor()->IsA<AChunkActor>())
+		{
+			const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
+			int32 BX, BY, BZ;
+			WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+
+			uint8 BlockID = 0;
+			if (GetVoxelAt(BX, BY, BZ, BlockID) && BlockID != 0)
+			{
+				const FVector Center(
+					(static_cast<float>(BX) + 0.5f) * BlockScale,
+					(static_cast<float>(BY) + 0.5f) * BlockScale,
+					(static_cast<float>(BZ) + 0.5f) * BlockScale
+				);
+				BlockHighlightActor->SetTargetBlock(Center);
+
+				if (AChunkActor* HitChunk = Cast<AChunkActor>(Hit.GetActor()))
+				{
+					HitChunk->LastTargetedHitLocation = Hit.ImpactPoint;
+					HitChunk->LastTargetedVoxelCoord = FIntVector(BX, BY, BZ);
+				}
+				return;
+			}
+		}
+	}
+
+	BlockHighlightActor->HideHighlight();
+}
+
+int32 AWorldGenerator::GetMaxQueueSlots() const
+{
+	return MiningQueueSystem ? MiningQueueSystem->GetMaxQueueSlots() : 1;
+}
+
+float AWorldGenerator::GetToolMiningForce() const
+{
+	return MiningQueueSystem ? MiningQueueSystem->GetToolMiningForce() : 1.0f;
+}
+
+void AWorldGenerator::SetToolTier(EToolTier NewTier)
+{
+	CurrentToolTier = NewTier;
+	if (MiningQueueSystem)
+	{
+		MiningQueueSystem->SetToolTier(NewTier);
+	}
+	UE_LOG(LogTemp, Log, TEXT("WorldGenerator: Tool Tier updated to %d. Max Queue Slots: %d, Mining Force: %.1f"),
+		static_cast<int32>(NewTier), GetMaxQueueSlots(), GetToolMiningForce());
+}
+
+bool AWorldGenerator::QueueBlockBreakAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, float MiningForceOverride)
+{
+	uint8 BlockID = 0;
+	if (!GetVoxelAt(VoxelX, VoxelY, VoxelZ, BlockID) || BlockID == 0 || BlockID == static_cast<uint8>(EBlockType::Bedrock))
+	{
+		return false;
+	}
+
+	// Query durability from BlockDataTable
+	float Durability = 1.0f;
+	if (BlockDataTable)
+	{
+		const UScriptStruct* RowStruct = BlockDataTable->GetRowStruct();
+		if (RowStruct)
+		{
+			for (auto It = BlockDataTable->GetRowMap().CreateConstIterator(); It; ++It)
+			{
+				const uint8* RowData = It.Value();
+				if (!RowData) continue;
+
+				int32 RowBlockID = -1;
+				double RowDur = 1.0;
+				for (TFieldIterator<FProperty> PropIt(RowStruct); PropIt; ++PropIt)
+				{
+					FProperty* Prop = *PropIt;
+					const FString PropName = Prop->GetName();
+					if (PropName.Contains(TEXT("BlockID"), ESearchCase::IgnoreCase))
+					{
+						if (FIntProperty* IP = CastField<FIntProperty>(Prop))
+							RowBlockID = IP->GetPropertyValue_InContainer(RowData);
+						else if (FByteProperty* BP = CastField<FByteProperty>(Prop))
+							RowBlockID = BP->GetPropertyValue_InContainer(RowData);
+					}
+					else if (PropName.Contains(TEXT("Durability"), ESearchCase::IgnoreCase))
+					{
+						if (FDoubleProperty* DP = CastField<FDoubleProperty>(Prop))
+							RowDur = DP->GetPropertyValue_InContainer(RowData);
+						else if (FFloatProperty* FP = CastField<FFloatProperty>(Prop))
+							RowDur = FP->GetPropertyValue_InContainer(RowData);
+					}
+				}
+
+				if (RowBlockID == static_cast<int32>(BlockID))
+				{
+					Durability = FMath::Max(0.05f, static_cast<float>(RowDur));
+					break;
+				}
+			}
+		}
+	}
+
+	if (MiningQueueSystem)
+	{
+		// If no explicit override is provided, query the player's BaublesSystem for the specialized tool's mining force
+		if (MiningForceOverride <= 0.0f)
+		{
+			APlayerController* PC = GetWorld()->GetFirstPlayerController();
+			if (PC && PC->GetPawn())
+			{
+				if (UBaublesSystem* Baubles = PC->GetPawn()->FindComponentByClass<UBaublesSystem>())
+				{
+					MiningForceOverride = Baubles->GetBestMiningForce(BlockID);
+				}
+			}
+		}
+
+		const bool bQueued = MiningQueueSystem->QueueBlock(FIntVector(VoxelX, VoxelY, VoxelZ), BlockID, Durability, MiningForceOverride);
+		ActiveMiningTasks = MiningQueueSystem->GetActiveMiningTasks();
+		return bQueued;
+	}
+
+	return false;
+}
+
+bool AWorldGenerator::QueueBlockBreakAtLocation(const FVector& HitLocation, float MiningForceOverride)
+{
+	int32 VX, VY, VZ;
+	WorldLocationToVoxelCoord(HitLocation, VX, VY, VZ);
+	return QueueBlockBreakAtVoxel(VX, VY, VZ, MiningForceOverride);
+}
+
+int32 AWorldGenerator::GetMiningQueueCount() const
+{
+	return MiningQueueSystem ? MiningQueueSystem->GetQueueCount() : 0;
+}
+
+TArray<FMiningTask> AWorldGenerator::GetActiveMiningTasks() const
+{
+	return MiningQueueSystem ? MiningQueueSystem->GetActiveMiningTasks() : TArray<FMiningTask>();
+}
+
+bool AWorldGenerator::CanCraftTool(EToolTier DesiredTier) const
+{
+	return CraftingSmeltingSystem ? CraftingSmeltingSystem->CanCraftTool(CurrentToolTier, DesiredTier) : false;
+}
+
+bool AWorldGenerator::CraftTool(EToolTier DesiredTier, FString& OutMessage)
+{
+	if (!CraftingSmeltingSystem)
+	{
+		OutMessage = TEXT("Crafting system not initialized.");
+		return false;
+	}
+
+	const bool bCrafted = CraftingSmeltingSystem->CraftTool(CurrentToolTier, DesiredTier, OutMessage);
+	if (bCrafted && MiningQueueSystem)
+	{
+		MiningQueueSystem->SetToolTier(CurrentToolTier);
+	}
+	return bCrafted;
+}
+
+float AWorldGenerator::GetFuelBurnDuration(uint8 FuelBlockID)
+{
+	return UCraftingSmeltingSystem::GetFuelBurnDuration(FuelBlockID);
+}
+
+bool AWorldGenerator::SmeltItem(uint8 InputBlockID, uint8 FuelBlockID, uint8& OutResultBlockID, FString& OutMessage)
+{
+	if (!CraftingSmeltingSystem)
+	{
+		OutMessage = TEXT("Smelting system not initialized.");
+		OutResultBlockID = 0;
+		return false;
+	}
+
+	return CraftingSmeltingSystem->SmeltItem(InputBlockID, FuelBlockID, OutResultBlockID, OutMessage);
+}
+
+uint8 AWorldGenerator::GetTargetedBlockType() const
+{
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC || !PC->PlayerCameraManager)
+	{
+		return 0;
+	}
+
+	const FVector Start = PC->PlayerCameraManager->GetCameraLocation();
+	const FVector End = Start + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 5.5f));
+
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	if (BlockHighlightActor)
+	{
+		Params.AddIgnoredActor(BlockHighlightActor);
+	}
+	if (PC->GetPawn())
+	{
+		Params.AddIgnoredActor(PC->GetPawn());
+	}
+
+	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params))
+	{
+		if (Hit.GetActor() && Hit.GetActor()->IsA<AChunkActor>())
+		{
+			const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
+			int32 BX, BY, BZ;
+			WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+			uint8 BlockID = 0;
+			if (GetVoxelAt(BX, BY, BZ, BlockID))
+			{
+				return BlockID;
+			}
+		}
+	}
+	return 0;
+}
+
+bool AWorldGenerator::InteractWithTargetBlock()
+{
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC || !PC->GetPawn() || !PC->PlayerCameraManager)
+	{
+		return false;
+	}
+
+	const FVector CamLoc = PC->PlayerCameraManager->GetCameraLocation();
+	const FVector PawnLoc = PC->GetPawn()->GetActorLocation();
+	const FVector Forward = PC->PlayerCameraManager->GetActorForwardVector();
+
+	// Player must be within 4 blocks of the target block
+	const float MaxInteractDistance = BlockScale * 4.5f;
+
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	if (BlockHighlightActor)
+	{
+		Params.AddIgnoredActor(BlockHighlightActor);
+	}
+	Params.AddIgnoredActor(PC->GetPawn());
+
+	if (GetWorld()->LineTraceSingleByChannel(Hit, CamLoc, CamLoc + (Forward * MaxInteractDistance), ECC_WorldStatic, Params))
+	{
+		if (Hit.GetActor() && Hit.GetActor()->IsA<AChunkActor>())
+		{
+			const float DistToPlayer = FVector::Dist(Hit.ImpactPoint, PawnLoc);
+			if (DistToPlayer > MaxInteractDistance)
+			{
+				return false;
+			}
+
+			const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
+			int32 BX, BY, BZ;
+			WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+
+			uint8 BlockID = 0;
+			if (GetVoxelAt(BX, BY, BZ, BlockID))
+			{
+				if (BlockID == static_cast<uint8>(EBlockType::Crafting_Table) || BlockID == 15)
+				{
+					UE_LOG(LogTemp, Log, TEXT("WorldGenerator: Interacted with Crafting Table at (%d, %d, %d)"), BX, BY, BZ);
+					OnCraftingTableOpened.Broadcast();
+					return true;
+				}
+				else if (BlockID == static_cast<uint8>(EBlockType::Furnace) || BlockID == 16)
+				{
+					UE_LOG(LogTemp, Log, TEXT("WorldGenerator: Interacted with Furnace at (%d, %d, %d)"), BX, BY, BZ);
+					OnFurnaceOpened.Broadcast();
+					return true;
+				}
+			}
+		}
+	}
+	return false;
 }
