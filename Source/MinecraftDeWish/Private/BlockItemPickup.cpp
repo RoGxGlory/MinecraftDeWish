@@ -6,6 +6,7 @@
 #include "UObject/UObjectIterator.h"
 #include "Engine/DataTable.h"
 #include "Kismet/GameplayStatics.h"
+#include "UObject/ConstructorHelpers.h"
 
 ABlockItemPickup::ABlockItemPickup()
 {
@@ -21,6 +22,13 @@ ABlockItemPickup::ABlockItemPickup()
 	MiniBlockMesh->SetupAttachment(RootComponent);
 	MiniBlockMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	MiniBlockMesh->SetCastShadow(true);
+
+	// Hard asset reference for cooker & standalone builds
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MatFinder(TEXT("/Game/Materials/M_Global.M_Global"));
+	if (MatFinder.Succeeded())
+	{
+		CachedMaterial = MatFinder.Object;
+	}
 }
 
 void ABlockItemPickup::BeginPlay()

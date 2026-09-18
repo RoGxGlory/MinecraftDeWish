@@ -3,6 +3,7 @@
 #include "MiningQueueSystem.h"
 #include "BaublesSystem.h"
 #include "Components/PointLightComponent.h"
+#include "UObject/ConstructorHelpers.h"
 
 AChunkActor::AChunkActor()
 {
@@ -31,6 +32,13 @@ AChunkActor::AChunkActor()
 	NonSolidMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);        // Players walk through
 	NonSolidMesh->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Overlap); // Physics objects pass through
 	NonSolidMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly); // No physics simulation, trace-only
+
+	// Hard asset reference for cooker & standalone builds
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MatFinder(TEXT("/Game/Materials/M_Global.M_Global"));
+	if (MatFinder.Succeeded())
+	{
+		DefaultTerrainMaterial = MatFinder.Object;
+	}
 }
 
 void AChunkActor::BeginPlay()
@@ -592,9 +600,13 @@ void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FCh
 			true // Generate collision for solid blocks
 		);
 
-		if (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
+		UMaterialInterface* SolidMat = (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
+			? WorldGenerator->TerrainMaterial
+			: DefaultTerrainMaterial;
+
+		if (SolidMat)
 		{
-			ProceduralMesh->SetMaterial(0, WorldGenerator->TerrainMaterial);
+			ProceduralMesh->SetMaterial(0, SolidMat);
 		}
 	}
 
@@ -616,9 +628,13 @@ void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FCh
 			true // Generate collision for trace queries
 		);
 
-		if (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
+		UMaterialInterface* NonSolidMat = (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
+			? WorldGenerator->TerrainMaterial
+			: DefaultTerrainMaterial;
+
+		if (NonSolidMat)
 		{
-			NonSolidMesh->SetMaterial(0, WorldGenerator->TerrainMaterial);
+			NonSolidMesh->SetMaterial(0, NonSolidMat);
 		}
 	}
 

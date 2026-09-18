@@ -16,11 +16,31 @@
 #include "QuickSlotsInventorySystem.h"
 #include "EnhancedInputComponent.h"
 #include "InputAction.h"
+#include "UObject/ConstructorHelpers.h"
 
 AWorldGenerator::AWorldGenerator()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickInterval = 0.05f; // Tick 20 times per second for streaming efficiency
+
+	// Hard asset references ensure cooker packages these into standalone .exe builds
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MatFinder(TEXT("/Game/Materials/M_Global.M_Global"));
+	if (MatFinder.Succeeded())
+	{
+		TerrainMaterial = MatFinder.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UDataTable> TableFinder(TEXT("/Game/Data/Block_DataTable.Block_DataTable"));
+	if (TableFinder.Succeeded())
+	{
+		BlockDataTable = TableFinder.Object;
+	}
+
+	static ConstructorHelpers::FClassFinder<AChunkActor> ChunkFinder(TEXT("/Game/General_Blueprints/Blocks/BP_ChunkActor.BP_ChunkActor_C"));
+	if (ChunkFinder.Succeeded())
+	{
+		ChunkActorClass = ChunkFinder.Class;
+	}
 
 	MiningQueueSystem = CreateDefaultSubobject<UMiningQueueSystem>(TEXT("MiningQueueSystem"));
 	CraftingSmeltingSystem = CreateDefaultSubobject<UCraftingSmeltingSystem>(TEXT("CraftingSmeltingSystem"));

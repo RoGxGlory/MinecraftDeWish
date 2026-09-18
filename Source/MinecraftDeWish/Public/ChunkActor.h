@@ -61,6 +61,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voxel")
 	float BlockScale = DEFAULT_BLOCK_SCALE;
 
+	/** Fallback master terrain material ensuring cook dependency and standalone build validity */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voxel")
+	UMaterialInterface* DefaultTerrainMaterial = nullptr;
+
 	/** True if blocks in this chunk were modified by the player */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voxel")
 	bool bIsModified = false;
