@@ -4,6 +4,8 @@
 #include "VoxelDataTypes.h"
 #include "ToolTypes.generated.h"
 
+class UTexture2D;
+
 /**
  * Tool type categories matching Minecraft's tool specialization system.
  * Each tool type is most effective against specific block categories.
@@ -149,5 +151,40 @@ struct MINECRAFTDEWISH_API FToolInstance
 			return FString::Printf(TEXT("%s %s"), *TierName, *TypeName);
 		}
 		return TEXT("Unknown Tool");
+	}
+
+	/** Returns the 2D icon texture for this tool from the Patrix texture pack */
+	static UTexture2D* GetToolIconTexture(EToolType Type, EToolTier Tier)
+	{
+		FString TypeStr;
+		switch (Type)
+		{
+		case EToolType::Pickaxe: TypeStr = TEXT("pickaxe"); break;
+		case EToolType::Shovel:  TypeStr = TEXT("shovel"); break;
+		case EToolType::Axe:     TypeStr = TEXT("axe"); break;
+		case EToolType::Hoe:     TypeStr = TEXT("hoe"); break;
+		case EToolType::Sword:   TypeStr = TEXT("sword"); break;
+		default: return nullptr;
+		}
+
+		FString TierStr;
+		switch (Tier)
+		{
+		case EToolTier::Wood:     TierStr = TEXT("wooden"); break;
+		case EToolTier::Stone:    TierStr = TEXT("stone"); break;
+		case EToolTier::Iron:     TierStr = TEXT("iron"); break;
+		case EToolTier::Diamond:  TierStr = TEXT("diamond"); break;
+		case EToolTier::Obsidian: TierStr = TEXT("netherite"); break;
+		default: return nullptr;
+		}
+
+		const FString AssetName = FString::Printf(TEXT("%s_%s"), *TierStr, *TypeStr);
+		const FString Path = FString::Printf(TEXT("/Game/Patrix_Texture_Pack/textures/item/%s.%s"), *AssetName, *AssetName);
+		return Cast<UTexture2D>(StaticLoadObject(UObject::StaticClass(), nullptr, *Path));
+	}
+
+	UTexture2D* GetIconTexture() const
+	{
+		return GetToolIconTexture(ToolType, ToolTier);
 	}
 };

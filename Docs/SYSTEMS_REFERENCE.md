@@ -1,6 +1,6 @@
 # Systems Technical Reference — MinecraftDeWish
 
-This document details the C++ subsystem architecture, class hierarchy, delegates, and integration pathways.
+This document details the C++ subsystem architecture, class hierarchy, delegates, input bindings, and integration pathways.
 
 ---
 
@@ -24,9 +24,9 @@ This document details the C++ subsystem architecture, class hierarchy, delegates
 └──────────────────────┘ └──────────────────────┘ └──────────────────────┘
 
  Player Pawn Components:
- ├── UBaublesSystem        (Dedicated 5-slot tool equipment)
- ├── UPlayerVitalSystem    (Health, natural regen, XP leveling)
- └── QuickSlotsInventory   (9-slot quickbar item pickup/stacking)
+ ├── UBaublesSystem           (Dedicated 5-slot tool equipment)
+ ├── UPlayerVitalSystem       (Health, natural regen, XP leveling)
+ └── UQuickSlotsInventory     (9-slot quickbar, dynamic opacity, IA_DropItem launch)
 ```
 
 ---
@@ -47,6 +47,7 @@ Core coordinator actor placed in the world.
   - `bool PlaceBlock(const FVector& WorldLocation, uint8 BlockID)`: Validates placement (including torch resting constraints) and updates meshes.
   - `bool InteractWithTargetBlock()`: Proximity right-click interaction with Crafting Tables and Furnaces.
   - `uint8 GetTargetedBlockType() const`: Returns targeted block ID for UI decisions.
+  - `void EnsureDropItemBound()`: Automatically binds `IA_DropItem` on the player pawn's `UEnhancedInputComponent` to execute `DropItemFromInventory`.
 - **Delegates**:
   - `OnCraftingTableOpened`: Broadcast when player right-clicks a Crafting Table within 4 blocks.
   - `OnFurnaceOpened`: Broadcast when player right-clicks a Furnace within 4 blocks.
@@ -60,14 +61,51 @@ Renders an individual $16 \times 16 \times 64$ chunk.
   - `ProceduralMesh`: Solid blocks with `QueryAndPhysics` collision.
   - `NonSolidMesh`: Non-solid blocks (Torches) with `QueryOnly` collision, `Overlap` for Pawns, `Block` for WorldStatic traces.
 - **Key Functions**:
-  - `GenerateMeshData(FChunkMeshData& SolidMesh, FChunkMeshData& NonSolidMesh)`: Traverses blocks, culls occluded faces, assigns texture indices into Texture2DArray.
-  - `ApplyMeshData(const FChunkMeshData& SolidMesh, const FChunkMeshData& NonSolidMesh)`: Uploads buffers to procedural mesh sections.
-  - `GetBlockIconTexture(int32 InBlockID)`: Static helper mapping block IDs to UI icon textures (matches `EBlockType` exactly).
-  - `GetBlockDataAtLocation(...)`: Interfaced by `AC_DestroySystem` and `WB_BlockInfo`.
+  - `GenerateMeshData(FChunkMeshData& SolidMesh, FChunkMeshData& NonSolidMesh)`: Traverses blocks, culls occluded faces, assigns texture indices into `Global_Textures_Array`.
+  - `ApplyMeshData(const FChunkMeshData& SolidMesh, const FChunkMeshData& NonSolidMesh)`: Uploads buffers (`UV0` face coordinates + `UV1.X` slice index) to procedural mesh sections.
+  - `GetBlockIconTexture(int32 InBlockID)`: Static helper resolving high-res 32×32 Patrix block textures (`/Game/Patrix_Texture_Pack/textures/block/`) with fallback to `/Game/Textures/Blocks/`.
+  - `GetBlockIconFromSlice(int32 TextureSliceIndex)`: Resolves 2D icons from the 37 Texture2DArray slices (mapping slice 30 to `oak_leaves`).
+  - `GetTargetedBlockBreakTime(float MiningForce)`: Computes exact break duration:
+    $$\text{BreakTime} = \frac{\text{BlockDurability}}{\text{EffectiveMiningForce}}$$
+    Differentiates Hand mining force ($1.0$) from equipped tool mining speed queried via `BaublesSystem`.
+  - `GetHandMiningForce()`: Returns $1.0\text{f}$ (base hand mining force).
+  - `GetCurrentBestToolMiningForce()`: Returns the mining force of the best equipped tool in Baubles matching the targeted block.
 
 ---
 
-### 3. `UBaublesSystem` (`UActorComponent`)
+### 3. `UQuickSlotsInventorySystem`
+Quickbar inventory management, dynamic opacity, and item drop launching.
+
+- **Functions**:
+  - `TryAddItemToPlayerInventory(AActor* PlayerActor, uint8 BlockID, int32 Count, int32& OutRemainingCount)`: Stacks items up to 64, finds first empty slot, and updates HUD.
+  - `RefreshQuickSlotVisual(UUserWidget* QuickSlotsWidget, int32 SlotIndex, uint8 BlockID, int32 ItemCount, const FName& BlockName)`:
+    - Sets slot texture and item name text.
+    - **Dynamic Opacity Rule**: When item present, `SetRenderOpacity(1.0f)` and `SetVisibility(Visible)`. When empty, `SetRenderOpacity(0.0f)` and `SetVisibility(Hidden)`.
+  - `DropItemFromInventory(AActor* PlayerActor, int32 SlotIndexOverride)`:
+    - Contextual: In gameplay, drops 1 item from the selected quickslot (`SelectedID - 1`). In an inventory/container panel, drops from the mouse-hovered slot.
+    - Decrements stack count by 1 (clearing slot when empty).
+    - Spawns and launches `ABlockItemPickup` 2.5 blocks forward with realistic 3D launch physics.
+  - `UpdateSlotOpacity(UWidget* SlotWidget, bool bHasItem)`: Blueprint-callable helper to set widget opacity to `1.0` or `0.0`.
+  - `UpdateAllQuickSlotOpacities(UUserWidget* QuickSlotsWidget)`: Refreshes all 9 quickslots on `WB_QuickSlots`.
+  - `SetHoveredInventorySlot(int32 SlotIndex, uint8 BlockID, UObject* SourceContainer)`: Tracks mouse hover for custom container panels (chest, crate, barrel, backpack).
+  - `ClearHoveredInventorySlot()`, `GetHoveredSlotIndex()`, `IsInInventoryPanel(AActor* PlayerActor)`.
+  - `GetQuickSlotData(int32 SlotIndex)`, `SetQuickSlotData(int32 SlotIndex, const FQuickSlotData& InData)`, `GetAllQuickSlots()`.
+
+---
+
+### 4. `ABlockItemPickup` (`AActor`)
+Physical voxel item drops in the world.
+
+- **Visuals**: Procedural mini-voxel cube (25cm) with texture coordinates matching the dropped block's Texture2DArray slice.
+- **Dynamics**:
+  - `LaunchPickup(const FVector& InVelocity, float InCooldown = 1.2f)`: Launches pickup with initial 3D velocity vector, gravity ($1200\text{ cm/s}^2$), air drag, and floor sweep collision.
+  - `PickupCooldown`: Prevents player from instantly picking up dropped items while in mid-air.
+  - Magnet pull towards player when within 250cm (after cooldown expires).
+  - Merges with nearby pickups of the same BlockID.
+
+---
+
+### 5. `UBaublesSystem` (`UActorComponent`)
 Player equipment component managing dedicated tool slots.
 
 - **Slots**:
@@ -90,7 +128,19 @@ Player equipment component managing dedicated tool slots.
 
 ---
 
-### 4. `UPlayerVitalSystem` (`UActorComponent`)
+### 6. `FToolInstance` (`ToolTypes.h`)
+Structure representing an individual tool instance.
+
+- **Properties**: `ToolType`, `ToolTier`, `CurrentDurability`, `MaxDurability`.
+- **Key Functions**:
+  - `static UTexture2D* GetToolIconTexture(EToolType Type, EToolTier Tier)`: Returns 32×32 Patrix item icons for all tool combinations (`wooden_pickaxe` to `netherite_pickaxe`).
+  - `UTexture2D* GetIconTexture() const`: Instance helper.
+  - `float GetBaseMiningForce() const`: Returns tier multiplier (Wood: 2×, Stone: 4×, Iron: 6×, Diamond: 10×, Obsidian: 15×).
+  - `float GetEffectiveMiningForce(uint8 BlockID) const`: Evaluates tool specialization against block category.
+
+---
+
+### 7. `UPlayerVitalSystem` (`UActorComponent`)
 Player health and progression manager.
 
 - **Properties**:
@@ -100,7 +150,7 @@ Player health and progression manager.
 - **Key Functions**:
   - `float ApplyDamage(float DamageAmount, AActor* DamageSource)`: Deals damage, updates health, triggers death if $\le 0$.
   - `float Heal(float HealAmount)`: Restores health up to `MaxHealth`.
-  - `void AddXP(int32 Amount)`: Awards XP, advances level, recalculates thresholds using $XP = 7 + (Level \times 3)$.
+  - `void AddXP(int32 Amount)`: Awards XP, advances level using $XP = 7 + (Level \times 3)$.
   - `void Respawn(const FVector& SpawnLocation)`: Restores full health and marks alive.
 - **Delegates**:
   - `OnHealthChanged(float NewHealth, float MaxHealth, float DamageAmount)`
@@ -110,7 +160,7 @@ Player health and progression manager.
 
 ---
 
-### 5. `UDayNightCycleSystem` (`UActorComponent`)
+### 8. `UDayNightCycleSystem` (`UActorComponent`)
 Manages planetary daylight progression and sunlight calculations.
 
 - **Properties**:
@@ -126,7 +176,7 @@ Manages planetary daylight progression and sunlight calculations.
 
 ---
 
-### 6. `UMobSpawnerSystem` (`UActorComponent`)
+### 9. `UMobSpawnerSystem` (`UActorComponent`)
 Handles hostile creature life cycles and ecological density.
 
 - **Properties**:
@@ -142,10 +192,12 @@ Handles hostile creature life cycles and ecological density.
 
 ---
 
-### 7. `AMobCharacter` (`ACharacter`)
+### 10. `AMobCharacter` (`ACharacter`)
 Autonomous hostile creature pawn.
 
 - **Mob Types**: `Zombie`, `Skeleton`, `Spider`, `Creeper`.
+- **Key Functions**:
+  - `static void GetMobTexturePaths(EMobType InType, FString& OutBaseColor, FString& OutNormal, FString& OutSpecular)`: Returns Patrix entity PBR texture paths.
 - **Key Behaviors**:
   - **Sunlight Burning**: Mobs with `bBurnsInSunlight` take 1 HP/s when exposed to open sky during daytime.
   - **Spider Wall Climbing**: Raycasts ahead; when obstructed by vertical blocks, applies upward vertical climbing velocity.
@@ -154,7 +206,7 @@ Autonomous hostile creature pawn.
 
 ---
 
-### 8. `AXPOrbPickup` (`AActor`)
+### 11. `AXPOrbPickup` (`AActor`)
 Physical experience orb in the world.
 
 - **Visuals**: Procedural diamond octahedron mesh with glowing green-yellow vertex colors.
@@ -163,9 +215,11 @@ Physical experience orb in the world.
 
 ---
 
-### 9. `UQuickSlotsInventorySystem`
-Quickbar inventory management and HUD synchronization.
-
-- **Functions**:
-  - `TryAddItemToPlayerInventory(...)`: Stacks items up to 64, finds first empty slot, updates HUD.
-  - `RefreshQuickSlotVisual(...)`: Sets slot texture, updates `ItemCount` text block, and synchronizes Blueprint integer properties.
+### 12. PBR Master Material (`M_Global`)
+Unified terrain shader sampling 32×32 texture arrays via `UV0` (face coordinates) and `UV1.X` (slice index):
+- **`Textures_Array`** (TextureSampleParameter2DArray): Base Color.
+- **`Normals_Array`** (TextureSampleParameter2DArray, Sampler: Normal): Tangent-space normals.
+- **`Specular_Array`** (TextureSampleParameter2DArray, Sampler: Linear Color):
+  - Red Channel (Smoothness) $\rightarrow$ `OneMinus` $\rightarrow$ Roughness.
+  - Green Channel (Reflectance) $\rightarrow$ Metallic.
+  - Alpha Channel $\rightarrow$ Multiply with Base Color $\rightarrow$ Emissive.

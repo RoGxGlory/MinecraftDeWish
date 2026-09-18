@@ -1,12 +1,22 @@
 #include "QuickSlotsInventorySystem.h"
+#include "BlockItemPickup.h"
+#include "BaublesSystem.h"
 #include "ChunkActor.h"
 #include "Engine/World.h"
+#include "Engine/DataTable.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Components/Image.h"
+#include "Components/TextBlock.h"
+#include "Components/Widget.h"
 #include "UObject/UObjectIterator.h"
 
 // Static inventory tracking for the player's 9 quickslots
 static TArray<FQuickSlotData> GPlayerQuickSlots;
+static int32 GHoveredInventorySlot = -1;
+static uint8 GHoveredBlockID = 0;
+static TWeakObjectPtr<UObject> GHoveredSourceContainer = nullptr;
 
 UQuickSlotsInventorySystem::UQuickSlotsInventorySystem()
 {
@@ -14,23 +24,6 @@ UQuickSlotsInventorySystem::UQuickSlotsInventorySystem()
 	for (int32 i = 0; i < NUM_QUICK_SLOTS; ++i)
 	{
 		QuickSlots[i].MaxStackSize = MAX_STACK_SIZE;
-	}
-}
-
-FQuickSlotData UQuickSlotsInventorySystem::GetSlotData(int32 SlotIndex) const
-{
-	if (QuickSlots.IsValidIndex(SlotIndex))
-	{
-		return QuickSlots[SlotIndex];
-	}
-	return FQuickSlotData();
-}
-
-void UQuickSlotsInventorySystem::SetSlotData(int32 SlotIndex, const FQuickSlotData& InData)
-{
-	if (QuickSlots.IsValidIndex(SlotIndex))
-	{
-		QuickSlots[SlotIndex] = InData;
 	}
 }
 
@@ -129,36 +122,90 @@ void UQuickSlotsInventorySystem::RefreshQuickSlotVisual(
 	// Resolve the slot's UImage widget
 	UImage* SlotImage = nullptr;
 
-	const FName VarName(*FString::Printf(TEXT("ImageItem%d"), SlotIndex));
-	const FName DisplayName(*FString::Printf(TEXT("Image Item %d"), SlotIndex));
+	// 1. Check ItemImages / Item Images array property (from WB_QuickSlots Setup Images)
+	const FName ArrayNames[] = {
+		FName(TEXT("ItemImages")),
+		FName(TEXT("Item Images")),
+		FName(TEXT("Item_Images"))
+	};
 
-	SlotImage = Cast<UImage>(QuickSlotsWidget->GetWidgetFromName(VarName));
-	if (!SlotImage)
+	for (const FName& ArrName : ArrayNames)
 	{
-		SlotImage = Cast<UImage>(QuickSlotsWidget->GetWidgetFromName(DisplayName));
-	}
-	if (!SlotImage)
-	{
-		if (FObjectProperty* Prop = CastField<FObjectProperty>(QuickSlotsWidget->GetClass()->FindPropertyByName(VarName)))
+		if (FArrayProperty* ArrProp = CastField<FArrayProperty>(QuickSlotsWidget->GetClass()->FindPropertyByName(ArrName)))
 		{
-			SlotImage = Cast<UImage>(Prop->GetObjectPropertyValue_InContainer(QuickSlotsWidget));
+			FScriptArrayHelper ArrayHelper(ArrProp, ArrProp->ContainerPtrToValuePtr<void>(QuickSlotsWidget));
+			const int32 TargetIdx = SlotIndex - 1; // 0-based
+			if (ArrayHelper.IsValidIndex(TargetIdx))
+			{
+				if (FObjectPropertyBase* ObjInner = CastField<FObjectPropertyBase>(ArrProp->Inner))
+				{
+					UObject* ItemObj = ObjInner->GetObjectPropertyValue(ArrayHelper.GetRawPtr(TargetIdx));
+					SlotImage = Cast<UImage>(ItemObj);
+					if (SlotImage)
+					{
+						break;
+					}
+				}
+			}
 		}
 	}
 
+	// 2. Fallback to direct widget names
+	if (!SlotImage)
+	{
+		const FName VarNames[] = {
+			FName(*FString::Printf(TEXT("ImageItem%d"), SlotIndex)),
+			FName(*FString::Printf(TEXT("Image Item %d"), SlotIndex)),
+			FName(*FString::Printf(TEXT("Image_Item_%d"), SlotIndex)),
+			FName(*FString::Printf(TEXT("ItemImage%d"), SlotIndex)),
+			FName(*FString::Printf(TEXT("Item Image %d"), SlotIndex)),
+			FName(*FString::Printf(TEXT("Slot%d"), SlotIndex)),
+			FName(*FString::Printf(TEXT("ImageSlot%d"), SlotIndex))
+		};
+
+		for (const FName& VarName : VarNames)
+		{
+			SlotImage = Cast<UImage>(QuickSlotsWidget->GetWidgetFromName(VarName));
+			if (SlotImage)
+			{
+				break;
+			}
+			if (FObjectProperty* Prop = CastField<FObjectProperty>(QuickSlotsWidget->GetClass()->FindPropertyByName(VarName)))
+			{
+				SlotImage = Cast<UImage>(Prop->GetObjectPropertyValue_InContainer(QuickSlotsWidget));
+				if (SlotImage)
+				{
+					break;
+				}
+			}
+		}
+	}
+
+	const bool bHasItem = (BlockID != 0 && ItemCount > 0);
+
 	if (SlotImage)
 	{
-		UTexture2D* Icon = AChunkActor::GetBlockIconTexture(BlockID);
-		if (Icon)
+		if (bHasItem)
 		{
-			SlotImage->SetBrushFromTexture(Icon, true);
-
-			FSlateBrush Brush = SlotImage->GetBrush();
-			Brush.SetResourceObject(Icon);
-			Brush.TintColor = FSlateColor(FLinearColor::White);
-			Brush.DrawAs = ESlateBrushDrawType::Image;
-			SlotImage->SetBrush(Brush);
-
+			UTexture2D* Icon = AChunkActor::GetBlockIconTexture(BlockID);
+			if (Icon)
+			{
+				SlotImage->SetBrushFromTexture(Icon, true);
+				FSlateBrush Brush = SlotImage->GetBrush();
+				Brush.SetResourceObject(Icon);
+				Brush.TintColor = FSlateColor(FLinearColor::White);
+				Brush.DrawAs = ESlateBrushDrawType::Image;
+				SlotImage->SetBrush(Brush);
+			}
+			SlotImage->SetRenderOpacity(1.0f);
+			SlotImage->SetColorAndOpacity(FLinearColor::White);
 			SlotImage->SetVisibility(ESlateVisibility::Visible);
+		}
+		else
+		{
+			SlotImage->SetRenderOpacity(0.0f);
+			SlotImage->SetColorAndOpacity(FLinearColor(1.0f, 1.0f, 1.0f, 0.0f));
+			SlotImage->SetVisibility(ESlateVisibility::Hidden);
 		}
 	}
 
@@ -197,7 +244,7 @@ void UQuickSlotsInventorySystem::RefreshQuickSlotVisual(
 
 	if (CountTextBlock)
 	{
-		if (ItemCount > 0)
+		if (bHasItem)
 		{
 			CountTextBlock->SetText(FText::AsNumber(ItemCount));
 			CountTextBlock->SetVisibility(ESlateVisibility::Visible);
@@ -219,30 +266,14 @@ void UQuickSlotsInventorySystem::RefreshQuickSlotVisual(
 	{
 		if (FIntProperty* CountProp = CastField<FIntProperty>(QuickSlotsWidget->GetClass()->FindPropertyByName(PropName)))
 		{
-			CountProp->SetPropertyValue_InContainer(QuickSlotsWidget, ItemCount);
+			CountProp->SetPropertyValue_InContainer(QuickSlotsWidget, bHasItem ? ItemCount : 0);
 			break;
 		}
 	}
 
 	// If this slot is currently selected in WB_QuickSlots, update the ItemName text
-	int32 SelectedSlotID = 1;
-	for (TFieldIterator<FProperty> PropIt(QuickSlotsWidget->GetClass()); PropIt; ++PropIt)
-	{
-		if (PropIt->GetName().Contains(TEXT("SelectedID"), ESearchCase::IgnoreCase))
-		{
-			if (FIntProperty* IP = CastField<FIntProperty>(*PropIt))
-			{
-				SelectedSlotID = IP->GetPropertyValue_InContainer(QuickSlotsWidget);
-			}
-			else if (FByteProperty* BP = CastField<FByteProperty>(*PropIt))
-			{
-				SelectedSlotID = BP->GetPropertyValue_InContainer(QuickSlotsWidget);
-			}
-			break;
-		}
-	}
-
-	if (SelectedSlotID == SlotIndex)
+	const int32 SelectedSlotIndex0 = GetSelectedQuickSlotIndex(QuickSlotsWidget);
+	if (SelectedSlotIndex0 == (SlotIndex - 1))
 	{
 		UTextBlock* NameTextBlock = Cast<UTextBlock>(QuickSlotsWidget->GetWidgetFromName(FName(TEXT("ItemName"))));
 		if (!NameTextBlock)
@@ -253,9 +284,16 @@ void UQuickSlotsInventorySystem::RefreshQuickSlotVisual(
 			}
 		}
 
-		if (NameTextBlock && !BlockName.IsNone())
+		if (NameTextBlock)
 		{
-			NameTextBlock->SetText(FText::FromName(BlockName));
+			if (bHasItem && !BlockName.IsNone())
+			{
+				NameTextBlock->SetText(FText::FromName(BlockName));
+			}
+			else
+			{
+				NameTextBlock->SetText(FText::GetEmpty());
+			}
 		}
 	}
 }
@@ -401,3 +439,408 @@ bool UQuickSlotsInventorySystem::TryAddItemToPlayerInventory(
 
 	return true;
 }
+
+bool UQuickSlotsInventorySystem::DropItemFromInventory(AActor* PlayerActor, int32 SlotIndexOverride)
+{
+	if (!PlayerActor)
+	{
+		return false;
+	}
+
+	UWorld* World = PlayerActor->GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	// Ensure global player quickslots are initialized
+	if (GPlayerQuickSlots.Num() != NUM_QUICK_SLOTS)
+	{
+		GPlayerQuickSlots.SetNum(NUM_QUICK_SLOTS);
+		for (int32 i = 0; i < NUM_QUICK_SLOTS; ++i)
+		{
+			GPlayerQuickSlots[i].MaxStackSize = MAX_STACK_SIZE;
+		}
+	}
+
+	UUserWidget* QuickSlotsWidget = ResolveQuickSlotsWidget(PlayerActor);
+
+	int32 TargetSlotIndex = -1; // 0-based
+
+	if (SlotIndexOverride >= 0 && SlotIndexOverride < NUM_QUICK_SLOTS)
+	{
+		TargetSlotIndex = SlotIndexOverride;
+	}
+	else if (IsInInventoryPanel(PlayerActor))
+	{
+		// In inventory panel: drop from hovered slot
+		if (GHoveredInventorySlot >= 0 && GHoveredInventorySlot < NUM_QUICK_SLOTS)
+		{
+			TargetSlotIndex = GHoveredInventorySlot;
+		}
+		else if (QuickSlotsWidget)
+		{
+			// Check if mouse is hovering any of the 9 slot widgets
+			for (int32 i = 0; i < NUM_QUICK_SLOTS; ++i)
+			{
+				const FName VarNames[] = {
+					FName(*FString::Printf(TEXT("ImageItem%d"), i + 1)),
+					FName(*FString::Printf(TEXT("Image Item %d"), i + 1)),
+					FName(*FString::Printf(TEXT("Slot%d"), i + 1)),
+					FName(*FString::Printf(TEXT("ItemSlot%d"), i + 1))
+				};
+				for (const FName& VarName : VarNames)
+				{
+					if (UWidget* SlotW = QuickSlotsWidget->GetWidgetFromName(VarName))
+					{
+						if (SlotW->IsHovered())
+						{
+							TargetSlotIndex = i;
+							break;
+						}
+					}
+				}
+				if (TargetSlotIndex >= 0)
+				{
+					break;
+				}
+			}
+		}
+
+		if (TargetSlotIndex < 0)
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("QuickSlotsInventorySystem: Drop attempted in inventory panel, but no slot is hovered."));
+			return false;
+		}
+	}
+	else
+	{
+		// In regular gameplay: drop from currently selected quickslot
+		TargetSlotIndex = GetSelectedQuickSlotIndex(QuickSlotsWidget);
+	}
+
+	if (!GPlayerQuickSlots.IsValidIndex(TargetSlotIndex))
+	{
+		return false;
+	}
+
+	FQuickSlotData& Slot = GPlayerQuickSlots[TargetSlotIndex];
+	if (Slot.IsEmpty() || Slot.ItemCount <= 0 || Slot.BlockID == 0)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("QuickSlotsInventorySystem: QuickSlot %d is empty, nothing to drop."), TargetSlotIndex + 1);
+		return false;
+	}
+
+	const uint8 DroppedBlockID = Slot.BlockID;
+
+	// Drop exactly 1 item
+	Slot.ItemCount -= 1;
+	if (Slot.ItemCount <= 0)
+	{
+		Slot.BlockID = 0;
+		Slot.ItemCount = 0;
+	}
+
+	// Lookup block row name for UI refresh if needed
+	FName BlockRowName = NAME_None;
+	if (Slot.BlockID != 0)
+	{
+		UDataTable* BlockDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/Block_DataTable.Block_DataTable"));
+		if (BlockDataTable)
+		{
+			const UScriptStruct* RowStruct = BlockDataTable->GetRowStruct();
+			if (RowStruct)
+			{
+				for (auto It = BlockDataTable->GetRowMap().CreateConstIterator(); It; ++It)
+				{
+					const uint8* RowData = It.Value();
+					if (!RowData) continue;
+
+					for (TFieldIterator<FProperty> PropIt(RowStruct); PropIt; ++PropIt)
+					{
+						if (PropIt->GetName().Contains(TEXT("BlockID"), ESearchCase::IgnoreCase))
+						{
+							int32 RowBlockID = -1;
+							if (FIntProperty* IP = CastField<FIntProperty>(*PropIt))
+								RowBlockID = IP->GetPropertyValue_InContainer(RowData);
+							else if (FByteProperty* BP = CastField<FByteProperty>(*PropIt))
+								RowBlockID = BP->GetPropertyValue_InContainer(RowData);
+
+							if (RowBlockID == static_cast<int32>(Slot.BlockID))
+							{
+								BlockRowName = It.Key();
+								break;
+							}
+						}
+					}
+					if (!BlockRowName.IsNone()) break;
+				}
+			}
+		}
+	}
+
+	// Refresh UI widget
+	if (QuickSlotsWidget)
+	{
+		RefreshQuickSlotVisual(QuickSlotsWidget, TargetSlotIndex + 1, Slot.BlockID, Slot.ItemCount, BlockRowName);
+	}
+
+	// Compute launch trajectory:
+	// 2.5 blocks = 250 units away
+	FVector ViewLoc;
+	FRotator ViewRot;
+
+	APlayerController* PC = Cast<APlayerController>(PlayerActor->GetInstigatorController());
+	if (!PC)
+	{
+		PC = World->GetFirstPlayerController();
+	}
+
+	if (PC && PC->PlayerCameraManager)
+	{
+		ViewLoc = PC->PlayerCameraManager->GetCameraLocation();
+		ViewRot = PC->PlayerCameraManager->GetCameraRotation();
+	}
+	else if (APawn* Pawn = Cast<APawn>(PlayerActor))
+	{
+		ViewLoc = Pawn->GetPawnViewLocation();
+		ViewRot = Pawn->GetViewRotation();
+	}
+	else
+	{
+		ViewLoc = PlayerActor->GetActorLocation() + FVector(0.0f, 0.0f, 60.0f);
+		ViewRot = PlayerActor->GetActorRotation();
+	}
+
+	const FVector ForwardDir = ViewRot.Vector();
+	const FVector SpawnLoc = ViewLoc + ForwardDir * 40.0f;
+
+	FVector HorizontalDir = FVector(ForwardDir.X, ForwardDir.Y, 0.0f).GetSafeNormal();
+	if (HorizontalDir.IsNearlyZero())
+	{
+		HorizontalDir = PlayerActor->GetActorForwardVector();
+	}
+
+	// Horizontal velocity 380 cm/s, upward velocity 170 cm/s
+	// Over ~0.65s flight time lands ~250 cm (2.5 blocks) in front
+	const FVector LaunchVel = HorizontalDir * 380.0f + FVector(0.0f, 0.0f, 170.0f);
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	ABlockItemPickup* DroppedPickup = World->SpawnActor<ABlockItemPickup>(
+		ABlockItemPickup::StaticClass(),
+		SpawnLoc,
+		ViewRot,
+		SpawnParams
+	);
+
+	if (DroppedPickup)
+	{
+		DroppedPickup->InitializePickup(DroppedBlockID, 1);
+		DroppedPickup->LaunchPickup(LaunchVel, 1.2f);
+		UE_LOG(LogTemp, Log, TEXT("QuickSlotsInventorySystem: Dropped 1 of BlockID %d from slot %d (remaining: %d). Launched 2.5 blocks forward."),
+			DroppedBlockID, TargetSlotIndex + 1, Slot.ItemCount);
+	}
+
+	return true;
+}
+
+void UQuickSlotsInventorySystem::SetHoveredInventorySlot(int32 SlotIndex, uint8 BlockID, UObject* SourceContainer)
+{
+	GHoveredInventorySlot = SlotIndex;
+	GHoveredBlockID = BlockID;
+	GHoveredSourceContainer = SourceContainer;
+}
+
+void UQuickSlotsInventorySystem::ClearHoveredInventorySlot()
+{
+	GHoveredInventorySlot = -1;
+	GHoveredBlockID = 0;
+	GHoveredSourceContainer = nullptr;
+}
+
+int32 UQuickSlotsInventorySystem::GetHoveredSlotIndex()
+{
+	return GHoveredInventorySlot;
+}
+
+bool UQuickSlotsInventorySystem::IsInInventoryPanel(AActor* PlayerActor)
+{
+	if (!PlayerActor)
+	{
+		return false;
+	}
+
+	UWorld* World = PlayerActor->GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(PlayerActor->GetInstigatorController());
+	if (!PC)
+	{
+		PC = World->GetFirstPlayerController();
+	}
+
+	if (PC && PC->bShowMouseCursor)
+	{
+		return true;
+	}
+
+	if (UBaublesSystem* Baubles = PlayerActor->FindComponentByClass<UBaublesSystem>())
+	{
+		if (Baubles->bIsBaublesOpen)
+		{
+			return true;
+		}
+	}
+
+	// Check if any inventory / container widgets are active in viewport
+	const TCHAR* ContainerKeywords[] = {
+		TEXT("WB_Inventory"),
+		TEXT("WB_Baubles"),
+		TEXT("WB_Crafting"),
+		TEXT("WB_Furnace"),
+		TEXT("WB_Chest"),
+		TEXT("WB_Barrel"),
+		TEXT("WB_Crate"),
+		TEXT("WB_Backpack")
+	};
+
+	for (TObjectIterator<UUserWidget> It; It; ++It)
+	{
+		UUserWidget* Widget = *It;
+		if (!Widget || Widget->HasAnyFlags(RF_ClassDefaultObject) || Widget->GetWorld() != World)
+		{
+			continue;
+		}
+
+		if (Widget->IsInViewport())
+		{
+			const FString ClassName = Widget->GetClass()->GetName();
+			for (const TCHAR* Kw : ContainerKeywords)
+			{
+				if (ClassName.Contains(Kw, ESearchCase::IgnoreCase))
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+void UQuickSlotsInventorySystem::UpdateSlotOpacity(UWidget* SlotWidget, bool bHasItem)
+{
+	if (!SlotWidget)
+	{
+		return;
+	}
+
+	const float TargetOpacity = bHasItem ? 1.0f : 0.0f;
+	SlotWidget->SetRenderOpacity(TargetOpacity);
+
+	if (UImage* Img = Cast<UImage>(SlotWidget))
+	{
+		Img->SetColorAndOpacity(bHasItem ? FLinearColor::White : FLinearColor(1.0f, 1.0f, 1.0f, 0.0f));
+		Img->SetVisibility(bHasItem ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
+	}
+	else
+	{
+		SlotWidget->SetVisibility(bHasItem ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
+	}
+}
+
+void UQuickSlotsInventorySystem::UpdateAllQuickSlotOpacities(UUserWidget* QuickSlotsWidget)
+{
+	if (!QuickSlotsWidget)
+	{
+		return;
+	}
+
+	if (GPlayerQuickSlots.Num() != NUM_QUICK_SLOTS)
+	{
+		GPlayerQuickSlots.SetNum(NUM_QUICK_SLOTS);
+		for (int32 i = 0; i < NUM_QUICK_SLOTS; ++i)
+		{
+			GPlayerQuickSlots[i].MaxStackSize = MAX_STACK_SIZE;
+		}
+	}
+
+	for (int32 i = 0; i < NUM_QUICK_SLOTS; ++i)
+	{
+		const FQuickSlotData& Slot = GPlayerQuickSlots[i];
+		RefreshQuickSlotVisual(QuickSlotsWidget, i + 1, Slot.BlockID, Slot.ItemCount, NAME_None);
+	}
+}
+
+FQuickSlotData UQuickSlotsInventorySystem::GetQuickSlotData(int32 SlotIndex)
+{
+	if (GPlayerQuickSlots.IsValidIndex(SlotIndex))
+	{
+		return GPlayerQuickSlots[SlotIndex];
+	}
+	return FQuickSlotData();
+}
+
+void UQuickSlotsInventorySystem::SetQuickSlotData(int32 SlotIndex, const FQuickSlotData& InData)
+{
+	if (GPlayerQuickSlots.Num() != NUM_QUICK_SLOTS)
+	{
+		GPlayerQuickSlots.SetNum(NUM_QUICK_SLOTS);
+		for (int32 i = 0; i < NUM_QUICK_SLOTS; ++i)
+		{
+			GPlayerQuickSlots[i].MaxStackSize = MAX_STACK_SIZE;
+		}
+	}
+
+	if (GPlayerQuickSlots.IsValidIndex(SlotIndex))
+	{
+		GPlayerQuickSlots[SlotIndex] = InData;
+	}
+}
+
+TArray<FQuickSlotData> UQuickSlotsInventorySystem::GetAllQuickSlots()
+{
+	if (GPlayerQuickSlots.Num() != NUM_QUICK_SLOTS)
+	{
+		GPlayerQuickSlots.SetNum(NUM_QUICK_SLOTS);
+		for (int32 i = 0; i < NUM_QUICK_SLOTS; ++i)
+		{
+			GPlayerQuickSlots[i].MaxStackSize = MAX_STACK_SIZE;
+		}
+	}
+	return GPlayerQuickSlots;
+}
+
+int32 UQuickSlotsInventorySystem::GetSelectedQuickSlotIndex(UUserWidget* QuickSlotsWidget)
+{
+	if (!QuickSlotsWidget)
+	{
+		return 0;
+	}
+
+	for (TFieldIterator<FProperty> PropIt(QuickSlotsWidget->GetClass()); PropIt; ++PropIt)
+	{
+		if (PropIt->GetName().Contains(TEXT("SelectedID"), ESearchCase::IgnoreCase))
+		{
+			int32 RawVal = 1;
+			if (FIntProperty* IP = CastField<FIntProperty>(*PropIt))
+			{
+				RawVal = IP->GetPropertyValue_InContainer(QuickSlotsWidget);
+			}
+			else if (FByteProperty* BP = CastField<FByteProperty>(*PropIt))
+			{
+				RawVal = BP->GetPropertyValue_InContainer(QuickSlotsWidget);
+			}
+			// SelectedID is typically 1..9, so return 0..8
+			return FMath::Clamp(RawVal - 1, 0, NUM_QUICK_SLOTS - 1);
+		}
+	}
+
+	return 0;
+}
+

@@ -290,9 +290,11 @@ private:
 	TObjectPtr<ABlockHighlightActor> BlockHighlightActor = nullptr;
 
 	void UpdateTargetBlockHighlight();
-	void RegisterChunkActorInterfaces();
 	void EnsureDestroySystemConfigured();
 	bool bDestroySystemConfigured = false;
+	void EnsureDropItemBound();
+	void HandleDropItemAction();
+	bool bDropItemBound = false;
 
 	// Persistence helpers
 	FString GetChunkSaveFilePath(const FChunkCoord& Coord) const;

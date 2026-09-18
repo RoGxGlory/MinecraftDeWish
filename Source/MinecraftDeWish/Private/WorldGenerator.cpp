@@ -13,6 +13,9 @@
 #include "Serialization/BufferArchive.h"
 #include "Serialization/MemoryReader.h"
 #include "BaublesSystem.h"
+#include "QuickSlotsInventorySystem.h"
+#include "EnhancedInputComponent.h"
+#include "InputAction.h"
 
 AWorldGenerator::AWorldGenerator()
 {
@@ -40,7 +43,6 @@ void AWorldGenerator::BeginPlay()
 
 	Noise.SetSeed(WorldSeed);
 	InitializeBlockCache();
-	RegisterChunkActorInterfaces();
 
 	if (!ChunkActorClass)
 	{
@@ -146,6 +148,7 @@ void AWorldGenerator::Tick(float DeltaTime)
 	ProcessGenerationQueue();
 	UpdateTargetBlockHighlight();
 	EnsureDestroySystemConfigured();
+	EnsureDropItemBound();
 
 	// Update active concurrent mining queue via modular subsystem
 	if (MiningQueueSystem)
@@ -1153,43 +1156,6 @@ void AWorldGenerator::SaveWorld()
 	}
 }
 
-void AWorldGenerator::RegisterChunkActorInterfaces()
-{
-	UClass* BuildInterface = Cast<UClass>(StaticLoadObject(UClass::StaticClass(), nullptr, TEXT("/Game/Interfaces/BPI_BuildSystem.BPI_BuildSystem_C")));
-	UClass* DestroyInterface = Cast<UClass>(StaticLoadObject(UClass::StaticClass(), nullptr, TEXT("/Game/Interfaces/BPI_Destroyable.BPI_Destroyable_C")));
-
-	UE_LOG(LogTemp, Log, TEXT("WorldGenerator: RegisterChunkActorInterfaces BuildInterface=%s, DestroyInterface=%s"),
-		BuildInterface ? *BuildInterface->GetName() : TEXT("NULL"),
-		DestroyInterface ? *DestroyInterface->GetName() : TEXT("NULL"));
-
-	UClass* ChunkClass = AChunkActor::StaticClass();
-	if (!ChunkClass) return;
-
-	if (BuildInterface && !ChunkClass->ImplementsInterface(BuildInterface))
-	{
-		ChunkClass->Interfaces.Add(FImplementedInterface(BuildInterface, 0, true));
-	}
-	if (DestroyInterface && !ChunkClass->ImplementsInterface(DestroyInterface))
-	{
-		ChunkClass->Interfaces.Add(FImplementedInterface(DestroyInterface, 0, true));
-	}
-
-	if (BuildInterface)
-	{
-		for (TFieldIterator<UFunction> FuncIt(BuildInterface); FuncIt; ++FuncIt)
-		{
-			ChunkClass->AddFunctionToFunctionMap(*FuncIt, FuncIt->GetFName());
-		}
-	}
-	if (DestroyInterface)
-	{
-		for (TFieldIterator<UFunction> FuncIt(DestroyInterface); FuncIt; ++FuncIt)
-		{
-			ChunkClass->AddFunctionToFunctionMap(*FuncIt, FuncIt->GetFName());
-		}
-	}
-}
-
 void AWorldGenerator::EnsureDestroySystemConfigured()
 {
 	if (bDestroySystemConfigured)
@@ -1233,6 +1199,49 @@ void AWorldGenerator::EnsureDestroySystemConfigured()
 			UE_LOG(LogTemp, Log, TEXT("WorldGenerator: Configured AC_DestroySystem InteractionDistance=%.0f, TimeBeforeNextLTCheck=0.02s"), BlockScale * 6.0f);
 			break;
 		}
+	}
+}
+
+void AWorldGenerator::EnsureDropItemBound()
+{
+	if (bDropItemBound)
+	{
+		return;
+	}
+
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC || !PC->GetPawn() || !PC->GetPawn()->InputComponent)
+	{
+		return;
+	}
+
+	UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PC->GetPawn()->InputComponent);
+	if (!EIC)
+	{
+		return;
+	}
+
+	UInputAction* DropAction = LoadObject<UInputAction>(nullptr, TEXT("/Game/Input/Actions/IA_DropItem.IA_DropItem"));
+	if (!DropAction)
+	{
+		DropAction = LoadObject<UInputAction>(nullptr, TEXT("/Game/Inputs/Actions/IA_DropItem.IA_DropItem"));
+	}
+
+	if (DropAction)
+	{
+		EIC->BindAction(DropAction, ETriggerEvent::Started, this, &AWorldGenerator::HandleDropItemAction);
+		bDropItemBound = true;
+		UE_LOG(LogTemp, Log, TEXT("WorldGenerator: Successfully bound IA_DropItem to DropItemFromInventory"));
+	}
+}
+
+void AWorldGenerator::HandleDropItemAction()
+{
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	AActor* PlayerActor = PC ? PC->GetPawn() : nullptr;
+	if (PlayerActor)
+	{
+		UQuickSlotsInventorySystem::DropItemFromInventory(PlayerActor);
 	}
 }
 

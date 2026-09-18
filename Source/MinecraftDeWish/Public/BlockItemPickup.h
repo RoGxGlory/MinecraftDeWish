@@ -77,6 +77,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Pickup")
 	void InitializePickup(uint8 InBlockID, int32 InCount = 1, UMaterialInterface* InMaterial = nullptr);
 
+	/** Current 3D velocity while in flight */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pickup|Physics")
+	FVector Velocity = FVector::ZeroVector;
+
+	/** Cooldown timer remaining before this item can be picked up or attracted to player */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pickup|Physics")
+	float PickupCooldown = 0.0f;
+
+	/** Whether this pickup is resting on the ground */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pickup|Physics")
+	bool bIsGrounded = false;
+
+	/** Launches this pickup with an initial 3D velocity and temporary pickup cooldown */
+	UFUNCTION(BlueprintCallable, Category = "Pickup")
+	void LaunchPickup(const FVector& InVelocity, float InCooldown = 1.2f);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
@@ -103,7 +119,6 @@ private:
 
 	// Gravity and Physics
 	float VerticalVelocity = 0.0f;
-	bool bIsGrounded = false;
 	float GroundZ = 0.0f;
 	float GravityStrength = 1200.0f;
 	float CheckFloorTimer = 0.0f;

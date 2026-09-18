@@ -4,7 +4,7 @@
 
 ## 1. Core Philosophy & Player Loop
 
-**MinecraftDeWish** recreates the classic Minecraft sandbox survival experience with an enhanced equipment model (Baubles system) and modular Unreal Engine 5 C++ architecture.
+**MinecraftDeWish** recreates the classic Minecraft sandbox survival experience with an enhanced equipment model (Baubles system), full PBR graphics (Patrix texture pack), and modular Unreal Engine 5 C++ architecture.
 
 ```
        ┌───────────────────────────────┐
@@ -54,23 +54,23 @@
 ## 3. Block Interaction & Mining Mechanics
 
 ### 3.1 Dual Collision Mesh
-In standard Minecraft, certain blocks (such as Torches, Tall Grass, Flowers, and Seeds) cannot impede player physics movement, but must still be interactable.
 - **Solid Blocks**: Spawn on section 0 with `ECollisionEnabled::QueryAndPhysics`.
 - **Non-Solid Blocks**: Spawn on section 1 with `ECollisionEnabled::QueryOnly`, setting `ECC_Pawn` to `ECR_Overlap` and `ECC_WorldStatic` to `ECR_Block`. Players walk through torches without getting snagged, yet line traces hit them accurately.
 
 ### 3.2 Block Breaking Formula
 $$\text{BreakTime} = \frac{\text{Block Durability}}{\text{Effective Mining Force}}$$
 
-Where $\text{Effective Mining Force}$ is calculated automatically from the player's equipped Baubles tool matching the block's preferred category:
-- Matching Tool: Multiplier based on tier (Wood: $2\times$, Stone: $4\times$, Iron: $6\times$, Diamond: $10\times$, Obsidian: $15\times$).
-- Unarmed / Wrong Tool: Base multiplier ($1.0\times$).
+Where $\text{Effective Mining Force}$ is calculated automatically:
+- Hands (no tool equipped in Baubles): $1.0\times$ base speed. A 0.5 durability block (Dirt) breaks in exactly **0.5 seconds**.
+- Matching Tool equipped in Baubles: Multiplier based on tier (Wood: $2\times$, Stone: $4\times$, Iron: $6\times$, Diamond: $10\times$, Obsidian: $15\times$).
+- Wrong Tool: Defaults to Hand speed ($1.0\times$) and does not consume durability.
 
 ---
 
 ## 4. The Baubles Equipment System
 
 ### 4.1 Concept
-In traditional Minecraft, quickslots are constantly cluttered with tools (pickaxe, axe, shovel, sword, hoe). The Baubles system gives tools dedicated inventory equipment slots:
+Tools are kept out of hotbars and housed in dedicated equipment slots:
 1. **Pickaxe Slot**: Automatically utilized when mining stone, ores, and masonry.
 2. **Shovel Slot**: Automatically utilized when mining dirt, grass, sand, and gravel.
 3. **Axe Slot**: Automatically utilized when chopping logs, planks, crafting tables, and wood fences.
@@ -78,7 +78,7 @@ In traditional Minecraft, quickslots are constantly cluttered with tools (pickax
 5. **Sword Slot**: Automatically applied to weapon melee damage.
 
 ### 4.2 Auto-Tool Selection
-Players do not need to switch active hotbar slots while mining. Pointing at a stone block automatically engages the equipped Pickaxe; swinging at dirt seamlessly activates the Shovel.
+Pointing at a stone block automatically engages the equipped Pickaxe; swinging at dirt seamlessly activates the Shovel.
 
 ### 4.3 UI Toggle
 Pressing **B** (`IA_Baubles`) opens and closes the dedicated Baubles equipment panel, broadcasting `OnBaublesToggled`.
@@ -104,7 +104,7 @@ Right-clicking a block within 4 blocks ($400$ UU) initiates interactive subsyste
 ### 6.1 Player Health & Regeneration
 - **Max Health**: 20.0 HP.
 - **Natural Regen**: 0.25 HP/s (1 HP every 4s) when health is below maximum and alive.
-- **Death**: Player is ragdolled/frozen, death event broadcasted, and respawns on terrain surface with XP loss penalty.
+- **Death**: Player is ragdolled/frozen, death event broadcasted, and respawns on terrain surface.
 
 ### 6.2 Hostile Mob Roster
 1. **Zombie**: Melee pursuer, burns in daylight, drops Rotten Flesh / Dirt.
@@ -116,3 +116,28 @@ Right-clicking a block within 4 blocks ($400$ UU) initiates interactive subsyste
 - Upon mob defeat, physical `AXPOrbPickup` polyhedral green orbs bounce into the world.
 - When within 3.5m of the player, they fly towards the player via magnet attraction.
 - Touching the player grants XP, advancing levels according to $XP = 7 + (Level \times 3)$.
+
+---
+
+## 7. Inventory, QuickSlots & Item Drop Mechanics
+
+### 7.1 Dynamic QuickSlot Opacity
+- Slots in `WB_QuickSlots` dynamically reflect item presence:
+  - If slot contains an item: `Opacity = 1.0` and `Visibility = Visible`.
+  - If slot is empty: `Opacity = 0.0` and `Visibility = Hidden`.
+
+### 7.2 Contextual Drop Action (`IA_DropItem`)
+- **Gameplay Mode**: Pressing `IA_DropItem` (mapped to `Q`) drops exactly 1 item from the currently selected quickslot.
+- **Inventory/Container Mode**: When an inventory panel is open (mouse cursor visible, Baubles open, or chest/crate open), pressing `IA_DropItem` drops 1 item from the mouse-hovered slot.
+- **3D Physics Launch**: The dropped item (`ABlockItemPickup`) is physically launched with forward velocity ($380\text{ cm/s}$) and upward arc ($170\text{ cm/s}$), landing smoothly **2.5 blocks** (250 cm) in front of the player.
+- **Pickup Cooldown**: Dropped items carry a 1.2-second pickup cooldown so the player does not instantly re-absorb them.
+
+---
+
+## 8. Visuals & Patrix PBR Graphics (32×32)
+
+- **Voxel Terrain Shading (`M_Global`)**:
+  - `Textures_Array`: High-resolution 32×32 Base Color.
+  - `Normals_Array`: 32×32 Tangent-Space Normal mapping for surface depth and lighting cracks.
+  - `Specular_Array`: 32×32 LabPBR Specular mapping for Roughness, Metallic, and Emissive glow.
+- **High-Res Icons**: Tool and block icons resolved directly from the Patrix texture pack.

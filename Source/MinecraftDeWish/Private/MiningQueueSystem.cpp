@@ -120,15 +120,15 @@ void UMiningQueueSystem::ClearQueue()
 float UMiningQueueSystem::CalculateBreakTime(float Durability, float MiningForce)
 {
 	// Ensure minimum durability and mining force
-	const float SafeDurability = FMath::Max(0.05f, Durability);
-	const float SafeForce = FMath::Max(0.1f, MiningForce);
+	const float SafeDurability = FMath::Max(0.01f, Durability);
+	const float SafeForce = FMath::Max(0.05f, MiningForce);
 
-	// Formula: BreakTime = Durability * 1.5 / MiningForce
+	// Formula: BreakTime = block_durability / mining_force
 	// Examples:
-	// Wood Log (Durability 2.0) with Hand (Force 1.0): 2.0 * 1.5 / 1.0 = 3.0s
-	// Wood Log (Durability 2.0) with Wood Tool (Force 2.0): 2.0 * 1.5 / 2.0 = 1.5s
-	// Stone (Durability 1.5) with Iron Tool (Force 6.0): 1.5 * 1.5 / 6.0 = 0.375s
-	return FMath::Clamp((SafeDurability * 1.5f) / SafeForce, 0.05f, 30.0f);
+	// Dirt (Durability 0.5) with Hand (Force 1.0): 0.5 / 1.0 = 0.5s
+	// Dirt (Durability 0.5) with Shovel (Force 2.0): 0.5 / 2.0 = 0.25s
+	// Stone (Durability 1.5) with Iron Pickaxe (Force 6.0): 1.5 / 6.0 = 0.25s
+	return SafeDurability / SafeForce;
 }
 
 float UMiningQueueSystem::GetMiningForceForTier(EToolTier Tier)

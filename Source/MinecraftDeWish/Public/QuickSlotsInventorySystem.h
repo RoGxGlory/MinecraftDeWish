@@ -92,13 +92,71 @@ public:
 		const FName& BlockName
 	);
 
-	/** Returns slot data for a specific slot index (0 to 8) */
+	/** Returns slot data for a specific slot index (0 to 8) from global player quickslots */
 	UFUNCTION(BlueprintPure, Category = "Inventory|QuickSlots")
-	FQuickSlotData GetSlotData(int32 SlotIndex) const;
+	static FQuickSlotData GetQuickSlotData(int32 SlotIndex);
 
-	/** Sets slot data directly */
+	/** Sets slot data directly in global player quickslots */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|QuickSlots")
-	void SetSlotData(int32 SlotIndex, const FQuickSlotData& InData);
+	static void SetQuickSlotData(int32 SlotIndex, const FQuickSlotData& InData);
+
+	/** Returns all 9 quick slots */
+	UFUNCTION(BlueprintPure, Category = "Inventory|QuickSlots")
+	static TArray<FQuickSlotData> GetAllQuickSlots();
+
+	/**
+	 * Drops 1 item from the player's inventory.
+	 * If not in an inventory panel: drops 1 from the currently highlighted quickslot (launched ~2.5 blocks forward).
+	 * If in an inventory panel: drops 1 from the currently hovered mouse slot.
+	 * 
+	 * @param PlayerActor The player character.
+	 * @param SlotIndexOverride If >= 0, forces dropping from this specific 0-based slot index.
+	 * @return True if an item was successfully dropped.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Drop")
+	static bool DropItemFromInventory(AActor* PlayerActor, int32 SlotIndexOverride = -1);
+
+	/**
+	 * Sets the currently hovered slot (for container/inventory UI support).
+	 * Call this from inventory widgets (chest, crate, barrel, backpack, quickslots) on mouse enter.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|UI")
+	static void SetHoveredInventorySlot(int32 SlotIndex, uint8 BlockID = 0, UObject* SourceContainer = nullptr);
+
+	/** Clears the currently hovered slot on mouse leave */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|UI")
+	static void ClearHoveredInventorySlot();
+
+	/** Returns currently hovered slot index (-1 if none) */
+	UFUNCTION(BlueprintPure, Category = "Inventory|UI")
+	static int32 GetHoveredSlotIndex();
+
+	/** Returns true if the player is currently inside an inventory panel (mouse cursor visible or container open) */
+	UFUNCTION(BlueprintPure, Category = "Inventory|UI")
+	static bool IsInInventoryPanel(AActor* PlayerActor);
+
+	/**
+	 * Updates the opacity and visibility of an item image slot.
+	 * If slot has an item (ItemCount > 0 && BlockID != 0): Opacity = 1.0, Visibility = Visible.
+	 * If slot is empty: Opacity = 0.0, Visibility = Hidden.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|QuickSlots")
+	static void UpdateSlotOpacity(UWidget* SlotWidget, bool bHasItem);
+
+	/**
+	 * Updates the opacity and visibility of ALL 9 quickslots on WB_QuickSlots based on current inventory data.
+	 * Slots with items have opacity = 1.0; empty slots have opacity = 0.0.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|QuickSlots")
+	static void UpdateAllQuickSlotOpacities(UUserWidget* QuickSlotsWidget);
+
+	/** Returns the 0-based index of the currently highlighted/selected quickslot on WB_QuickSlots (0..8) */
+	UFUNCTION(BlueprintPure, Category = "Inventory|QuickSlots")
+	static int32 GetSelectedQuickSlotIndex(UUserWidget* QuickSlotsWidget);
+
+	/** Backward compatibility instance wrappers */
+	FQuickSlotData GetSlotData(int32 SlotIndex) const { return GetQuickSlotData(SlotIndex); }
+	void SetSlotData(int32 SlotIndex, const FQuickSlotData& InData) { SetQuickSlotData(SlotIndex, InData); }
 
 private:
 	/** Internal slot array */

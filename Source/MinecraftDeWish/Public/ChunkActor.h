@@ -125,13 +125,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Voxel")
 	float GetTargetedBlockDurability() const;
 
-	/** Calculates the exact mining break time in seconds based on block durability and tool mining force */
-	UFUNCTION(BlueprintPure, Category = "Voxel")
-	float GetTargetedBlockBreakTime(float MiningForce) const;
+	/** Calculates the exact mining break time in seconds based on block durability and tool/hand mining force (Durability / Force) */
+	UFUNCTION(BlueprintPure, Category = "Voxel|Mining")
+	float GetTargetedBlockBreakTime(float MiningForce = 0.0f) const;
+
+	/** Returns the mining force of the best equipped tool for the targeted block, or base hand force (1.0) if none equipped */
+	UFUNCTION(BlueprintPure, Category = "Voxel|Mining")
+	float GetCurrentBestToolMiningForce() const;
+
+	/** Base hand mining force when no tools are equipped (always 1.0) */
+	UFUNCTION(BlueprintPure, Category = "Voxel|Mining")
+	static float GetHandMiningForce();
 
 	/** Calculates timeline play rate based on mining force and durability */
-	UFUNCTION(BlueprintPure, Category = "Voxel")
-	float GetTargetedBlockPlayRate(float MiningForce, float TimelineLength = 1.0f) const;
+	UFUNCTION(BlueprintPure, Category = "Voxel|Mining")
+	float GetTargetedBlockPlayRate(float MiningForce = 0.0f, float TimelineLength = 1.0f) const;
 
 	/** Returns the 2D icon texture for a given BlockID to display in WB_BlockInfo or UI slots */
 	UFUNCTION(BlueprintPure, Category = "Voxel|UI")
@@ -140,8 +148,6 @@ public:
 	/** Returns the 2D icon texture for a given Global_Textures_Array slice index */
 	UFUNCTION(BlueprintPure, Category = "Voxel|UI")
 	static UTexture2D* GetBlockIconFromSlice(int32 TextureSliceIndex);
-
-	virtual void ProcessEvent(UFunction* Function, void* Parms) override;
 
 	UPROPERTY()
 	FVector LastTargetedHitLocation = FVector::ZeroVector;

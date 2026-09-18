@@ -61,6 +61,40 @@ void AMobCharacter::InitializeMob(EMobType InType, AWorldGenerator* InWorldGen)
 		CurrentHealth, MobDefinition.MoveSpeed);
 }
 
+void AMobCharacter::GetMobTexturePaths(EMobType InType, FString& OutBaseColor, FString& OutNormal, FString& OutSpecular)
+{
+	FString FolderName;
+	FString AssetName;
+
+	switch (InType)
+	{
+	case EMobType::Zombie:
+		FolderName = TEXT("zombie");
+		AssetName = TEXT("zombie");
+		break;
+	case EMobType::Skeleton:
+		FolderName = TEXT("skeleton");
+		AssetName = TEXT("skeleton");
+		break;
+	case EMobType::Spider:
+		FolderName = TEXT("spider");
+		AssetName = TEXT("spider");
+		break;
+	case EMobType::Creeper:
+		FolderName = TEXT("creeper");
+		AssetName = TEXT("creeper");
+		break;
+	default:
+		FolderName = TEXT("zombie");
+		AssetName = TEXT("zombie");
+		break;
+	}
+
+	OutBaseColor = FString::Printf(TEXT("/Game/Patrix_Texture_Pack/textures/entity/%s/%s.%s"), *FolderName, *AssetName, *AssetName);
+	OutNormal = FString::Printf(TEXT("/Game/Patrix_Texture_Pack/textures/entity/%s/%s_n.%s_n"), *FolderName, *AssetName, *AssetName);
+	OutSpecular = FString::Printf(TEXT("/Game/Patrix_Texture_Pack/textures/entity/%s/%s_s.%s_s"), *FolderName, *AssetName, *AssetName);
+}
+
 void AMobCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);

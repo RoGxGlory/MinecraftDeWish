@@ -39,27 +39,47 @@ void ABlockItemPickup::BeginPlay()
 	}
 }
 
+void ABlockItemPickup::LaunchPickup(const FVector& InVelocity, float InCooldown)
+{
+	Velocity = InVelocity;
+	VerticalVelocity = InVelocity.Z;
+	PickupCooldown = InCooldown;
+	bIsGrounded = false;
+}
+
 void ABlockItemPickup::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// Count down pickup cooldown (preventing immediate re-pickup after dropping)
+	if (PickupCooldown > 0.0f)
+	{
+		PickupCooldown = FMath::Max(0.0f, PickupCooldown - DeltaTime);
+	}
 
 	RunningTime += DeltaTime;
 
 	// Rotate continuously around Z axis
 	AddActorLocalRotation(FRotator(0.0f, RotationSpeed * DeltaTime, 0.0f));
 
-	// Physics gravity simulation
+	// Physics gravity & trajectory simulation
 	UpdateGravity(DeltaTime);
 
-	// Magnet attraction toward player
-	UpdatePlayerAttraction(DeltaTime);
+	// Magnet attraction toward player (only if cooldown expired)
+	if (PickupCooldown <= 0.0f)
+	{
+		UpdatePlayerAttraction(DeltaTime);
+	}
 
 	// Stack merging in the world (up to 64 items)
 	CheckNearbyStackMerging();
 
-	// Gentle floating bob
-	const float BobOffsetZ = FMath::Sin(RunningTime * BobFrequency) * BobHeight;
-	MiniBlockMesh->SetRelativeLocation(MeshBaseOffset + FVector(0.0f, 0.0f, BobOffsetZ));
+	// Gentle floating bob when grounded
+	if (bIsGrounded)
+	{
+		const float BobOffsetZ = FMath::Sin(RunningTime * BobFrequency) * BobHeight;
+		MiniBlockMesh->SetRelativeLocation(MeshBaseOffset + FVector(0.0f, 0.0f, BobOffsetZ));
+	}
 }
 
 void ABlockItemPickup::UpdatePlayerAttraction(float DeltaTime)
@@ -89,26 +109,42 @@ void ABlockItemPickup::UpdateGravity(float DeltaTime)
 {
 	if (!bIsGrounded)
 	{
-		VerticalVelocity -= GravityStrength * DeltaTime;
-		const float StepZ = VerticalVelocity * DeltaTime;
+		// Apply gravity
+		Velocity.Z -= GravityStrength * DeltaTime;
+		VerticalVelocity = Velocity.Z;
+
+		// Air drag on horizontal motion
+		Velocity.X *= FMath::Clamp(1.0f - (1.2f * DeltaTime), 0.0f, 1.0f);
+		Velocity.Y *= FMath::Clamp(1.0f - (1.2f * DeltaTime), 0.0f, 1.0f);
 
 		const FVector CurrentLoc = GetActorLocation();
-		const FVector TraceEnd = CurrentLoc + FVector(0.0f, 0.0f, StepZ - 14.0f);
+		const FVector Step = Velocity * DeltaTime;
+		const FVector TargetLoc = CurrentLoc + Step;
 
 		FHitResult Hit;
 		FCollisionQueryParams Params;
 		Params.AddIgnoredActor(this);
 
-		if (GetWorld()->LineTraceSingleByChannel(Hit, CurrentLoc, TraceEnd, ECC_WorldStatic, Params))
+		if (GetWorld()->LineTraceSingleByChannel(Hit, CurrentLoc, TargetLoc, ECC_WorldStatic, Params))
 		{
-			bIsGrounded = true;
-			VerticalVelocity = 0.0f;
-			GroundZ = Hit.ImpactPoint.Z + 14.0f;
-			SetActorLocation(FVector(CurrentLoc.X, CurrentLoc.Y, GroundZ));
+			if (Hit.ImpactNormal.Z > 0.5f) // Floor hit
+			{
+				bIsGrounded = true;
+				Velocity = FVector::ZeroVector;
+				VerticalVelocity = 0.0f;
+				GroundZ = Hit.ImpactPoint.Z + 14.0f;
+				SetActorLocation(FVector(Hit.ImpactPoint.X, Hit.ImpactPoint.Y, GroundZ));
+			}
+			else // Wall hit: stop horizontal motion and slide down
+			{
+				Velocity.X = 0.0f;
+				Velocity.Y = 0.0f;
+				SetActorLocation(Hit.ImpactPoint + (Hit.ImpactNormal * 12.0f));
+			}
 		}
 		else
 		{
-			AddActorWorldOffset(FVector(0.0f, 0.0f, StepZ));
+			AddActorWorldOffset(Step);
 		}
 	}
 	else
@@ -128,6 +164,7 @@ void ABlockItemPickup::UpdateGravity(float DeltaTime)
 			if (!GetWorld()->LineTraceSingleByChannel(Hit, CurrentLoc, TraceEnd, ECC_WorldStatic, Params))
 			{
 				bIsGrounded = false;
+				Velocity = FVector::ZeroVector;
 				VerticalVelocity = 0.0f;
 			}
 		}
@@ -442,7 +479,7 @@ void ABlockItemPickup::OnOverlapBegin(
 	const FHitResult& SweepResult
 )
 {
-	if (!OtherActor || OtherActor == this)
+	if (!OtherActor || OtherActor == this || PickupCooldown > 0.0f)
 	{
 		return;
 	}

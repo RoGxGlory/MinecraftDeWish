@@ -1,6 +1,6 @@
 # Tool & Baubles Equipment Registry — MinecraftDeWish
 
-This document details the tool specialization system, tier progression, mining speed multipliers, durability costs, and combat statistics.
+This document details the tool specialization system, tier progression, mining speed multipliers, durability costs, combat statistics, and Patrix PBR icon paths.
 
 ---
 
@@ -25,7 +25,7 @@ This document details the tool specialization system, tier progression, mining s
 | **Stone** | 131 uses | $4.0\times$ | $+3.0$ (4.0 total) | 3 blocks |
 | **Iron** | 250 uses | $6.0\times$ | $+4.0$ (5.0 total) | 4 blocks |
 | **Diamond** | 1,561 uses | $10.0\times$ | $+5.0$ (6.0 total) | 5 blocks |
-| **Obsidian** | 3,122 uses | $15.0\times$ | $+7.0$ (8.0 total) | 6 blocks |
+| **Obsidian (Netherite)** | 2,031 uses | $15.0\times$ | $+7.0$ (8.0 total) | 6 blocks |
 
 ---
 
@@ -34,6 +34,11 @@ This document details the tool specialization system, tier progression, mining s
 Break time is calculated per block as:
 
 $$\text{BreakTime (seconds)} = \frac{\text{Block Durability}}{\text{Effective Mining Force}}$$
+
+Where:
+- When using hands (no tool equipped in Baubles): $\text{Effective Mining Force} = 1.0$.
+- When a matching tool is equipped in Baubles: $\text{Effective Mining Force} = \text{Tool Mining Speed}$.
+- When mining with an unmatching tool: defaults to $1.0\times$ hand speed and does not consume durability.
 
 ### Sample Break Times by Block & Tier
 
@@ -46,8 +51,21 @@ $$\text{BreakTime (seconds)} = \frac{\text{Block Durability}}{\text{Effective Mi
 | **Iron Block** | 5.00 | 5.00s | 2.50s *(Pickaxe)* | 1.25s *(Pickaxe)* | 0.83s *(Pickaxe)* | 0.50s *(Pickaxe)* |
 | **Torch** | 0.05 | 0.05s | 0.05s | 0.05s | 0.05s | 0.05s |
 
-> [!NOTE]
-> If a player attempts to mine a block using the wrong tool (e.g. mining Stone with an Axe equipped in Baubles), the system defaults to Hand speed ($1.0\times$) and does not consume Axe durability.
+---
+
+## Patrix HD Tool Icons (`FToolInstance::GetToolIconTexture`)
+
+All tool icons are resolved in 32×32 resolution from the Patrix texture pack:
+
+| Tool | Wood | Stone | Iron | Diamond | Netherite (Obsidian) |
+|---|---|---|---|---|---|
+| **Pickaxe** | `wooden_pickaxe` | `stone_pickaxe` | `iron_pickaxe` | `diamond_pickaxe` | `netherite_pickaxe` |
+| **Shovel** | `wooden_shovel` | `stone_shovel` | `iron_shovel` | `diamond_shovel` | `netherite_shovel` |
+| **Axe** | `wooden_axe` | `stone_axe` | `iron_axe` | `diamond_axe` | `netherite_axe` |
+| **Hoe** | `wooden_hoe` | `stone_hoe` | `iron_hoe` | `diamond_hoe` | `netherite_hoe` |
+| **Sword** | `wooden_sword` | `stone_sword` | `iron_sword` | `diamond_sword` | `netherite_sword` |
+
+Asset path pattern: `/Game/Patrix_Texture_Pack/textures/item/<Name>.<Name>`
 
 ---
 

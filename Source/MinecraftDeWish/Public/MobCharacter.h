@@ -34,6 +34,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob")
 	FMobDefinition MobDefinition;
 
+	/** Returns the Patrix PBR texture paths (BaseColor, Normal, Specular) for this mob type */
+	UFUNCTION(BlueprintPure, Category = "Mob|Visual")
+	static void GetMobTexturePaths(EMobType InType, FString& OutBaseColor, FString& OutNormal, FString& OutSpecular);
+
 	// ==================== HEALTH ====================
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob|Health")

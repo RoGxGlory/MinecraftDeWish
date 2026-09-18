@@ -227,8 +227,74 @@ void AChunkActor::AddFace(
 	MeshData.Normals.Add(Normal);
 	MeshData.Normals.Add(Normal);
 
-	// Tangents
-	const FVector TangentDir = FMath::Abs(Normal.Z) > 0.9f ? FVector(1.0f, 0.0f, 0.0f) : FVector::CrossProduct(Normal, FVector::UpVector);
+	// Determine if this texture is isotropic (seamlessly rotatable by 90-degree steps without directional misalignment)
+	const bool bIsIsotropic = (
+		TextureIndex == 27 || // grass_block_top
+		TextureIndex == 14 || // dirt
+		TextureIndex == 6  || // cobblestone
+		TextureIndex == 35 || // stone
+		TextureIndex == 34 || // sand
+		TextureIndex == 4  || // coal_block
+		TextureIndex == 5  || // coal_ore
+		TextureIndex == 28 || // iron_block
+		TextureIndex == 29 || // iron_ore
+		TextureIndex == 24 || // gold_block
+		TextureIndex == 25 || // gold_ore
+		TextureIndex == 12 || // diamond_block
+		TextureIndex == 13 || // diamond_ore
+		TextureIndex == 15 || // emerald_block
+		TextureIndex == 16 || // emerald_ore
+		TextureIndex == 17 || // farmland
+		TextureIndex == 18 || // farmland_moist
+		TextureIndex == 30    // oak_leaves
+	);
+
+	int32 Rot = 0;
+	if (bIsIsotropic && (Face == EBlockFace::Top || Face == EBlockFace::Bottom))
+	{
+		const int32 LocalX = FMath::RoundToInt(BlockPos.X / S);
+		const int32 LocalY = FMath::RoundToInt(BlockPos.Y / S);
+		const int32 LocalZ = FMath::RoundToInt(BlockPos.Z / S);
+		const int32 WorldX = ChunkCoord.X * CHUNK_SIZE_X + LocalX;
+		const int32 WorldY = ChunkCoord.Y * CHUNK_SIZE_Y + LocalY;
+		const int32 WorldZ = LocalZ;
+
+		// Deterministic 2-bit rotation from spatial integer coordinates
+		const uint32 PosHash = (static_cast<uint32>(WorldX) * 73856093u) ^
+		                       (static_cast<uint32>(WorldY) * 19349663u) ^
+		                       (static_cast<uint32>(WorldZ) * 83492791u);
+		Rot = PosHash & 3;
+	}
+
+	// Tangents aligned with rotated U direction for accurate normal mapping
+	static const FVector TopTangents[4] = {
+		FVector(1.0f, 0.0f, 0.0f),
+		FVector(0.0f, 1.0f, 0.0f),
+		FVector(-1.0f, 0.0f, 0.0f),
+		FVector(0.0f, -1.0f, 0.0f)
+	};
+
+	static const FVector BottomTangents[4] = {
+		FVector(1.0f, 0.0f, 0.0f),
+		FVector(0.0f, -1.0f, 0.0f),
+		FVector(-1.0f, 0.0f, 0.0f),
+		FVector(0.0f, 1.0f, 0.0f)
+	};
+
+	FVector TangentDir;
+	if (Face == EBlockFace::Top)
+	{
+		TangentDir = TopTangents[Rot];
+	}
+	else if (Face == EBlockFace::Bottom)
+	{
+		TangentDir = BottomTangents[Rot];
+	}
+	else
+	{
+		TangentDir = FVector::CrossProduct(Normal, FVector::UpVector);
+	}
+
 	const FProcMeshTangent Tangent(TangentDir.GetSafeNormal(), false);
 	MeshData.Tangents.Add(Tangent);
 	MeshData.Tangents.Add(Tangent);
@@ -236,14 +302,22 @@ void AChunkActor::AddFace(
 	MeshData.Tangents.Add(Tangent);
 
 	// UV0 mapping:
+	// For Top/Bottom faces of isotropic blocks, rotate UVs by 0, 90, 180, or 270 degrees to break tiling patterns.
 	// For vertical side faces: V0/V1 are bottom (Z=0, UV V=1.0), V2/V3 are top (Z=S, UV V=0.0).
-	// This ensures upright textures so the green grass fringe is at the TOP of the block, connecting to grass top.
+	// This ensures upright textures so the grass fringe is at the TOP of the block, connecting to grass top.
+	static const FVector2D RotatedUVs[4][4] = {
+		{ FVector2D(0.0f, 0.0f), FVector2D(1.0f, 0.0f), FVector2D(1.0f, 1.0f), FVector2D(0.0f, 1.0f) }, // Rot 0
+		{ FVector2D(0.0f, 1.0f), FVector2D(0.0f, 0.0f), FVector2D(1.0f, 0.0f), FVector2D(1.0f, 1.0f) }, // Rot 1 (90 deg CW)
+		{ FVector2D(1.0f, 1.0f), FVector2D(0.0f, 1.0f), FVector2D(0.0f, 0.0f), FVector2D(1.0f, 0.0f) }, // Rot 2 (180 deg CW)
+		{ FVector2D(1.0f, 0.0f), FVector2D(1.0f, 1.0f), FVector2D(0.0f, 1.0f), FVector2D(0.0f, 0.0f) }  // Rot 3 (270 deg CW)
+	};
+
 	if (Face == EBlockFace::Top || Face == EBlockFace::Bottom)
 	{
-		MeshData.UV0.Add(FVector2D(0.0f, 0.0f));
-		MeshData.UV0.Add(FVector2D(1.0f, 0.0f));
-		MeshData.UV0.Add(FVector2D(1.0f, 1.0f));
-		MeshData.UV0.Add(FVector2D(0.0f, 1.0f));
+		MeshData.UV0.Add(RotatedUVs[Rot][0]);
+		MeshData.UV0.Add(RotatedUVs[Rot][1]);
+		MeshData.UV0.Add(RotatedUVs[Rot][2]);
+		MeshData.UV0.Add(RotatedUVs[Rot][3]);
 	}
 	else
 	{
@@ -836,27 +910,53 @@ float AChunkActor::GetTargetedBlockDurability() const
 	return 1.0f;
 }
 
-float AChunkActor::GetTargetedBlockBreakTime(float MiningForce) const
+float AChunkActor::GetHandMiningForce()
 {
-	float EffectiveMiningForce = MiningForce;
+	return 1.0f;
+}
 
-	// If no force was passed or it's <= 0, query equipped tool from BaublesSystem or fallback to 1.0f (hand)
-	if (EffectiveMiningForce <= 0.0f)
+float AChunkActor::GetCurrentBestToolMiningForce() const
+{
+	const uint8 BlockID = GetTargetedBlockID();
+
+	// 1. Query player's BaublesSystem for equipped specialized tool
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (PC && PC->GetPawn())
 	{
-		const uint8 BlockID = GetTargetedBlockID();
-		APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-		if (PC && PC->GetPawn())
+		if (UBaublesSystem* Baubles = PC->GetPawn()->FindComponentByClass<UBaublesSystem>())
 		{
-			if (UBaublesSystem* Baubles = PC->GetPawn()->FindComponentByClass<UBaublesSystem>())
+			const float ToolForce = Baubles->GetBestMiningForce(BlockID);
+			if (ToolForce > 1.0f)
 			{
-				EffectiveMiningForce = Baubles->GetBestMiningForce(BlockID);
+				return ToolForce;
 			}
 		}
+	}
 
-		if (EffectiveMiningForce <= 0.0f)
+	// 2. Query WorldGenerator tier facade if applicable
+	if (WorldGenerator.IsValid())
+	{
+		const float WorldGenForce = WorldGenerator->GetToolMiningForce();
+		if (WorldGenForce > 1.0f)
 		{
-			EffectiveMiningForce = 1.0f;
+			return WorldGenForce;
 		}
+	}
+
+	// 3. Fallback to base hand mining force
+	return GetHandMiningForce();
+}
+
+float AChunkActor::GetTargetedBlockBreakTime(float MiningForce) const
+{
+	const float BestToolForce = GetCurrentBestToolMiningForce();
+
+	// If a specific MiningForce > 1.0 was explicitly passed, respect it (or take higher of passed force or tool force).
+	// If MiningForce <= 1.0 (e.g. 0.0 uninitialized or 1.0 default hand force from AC_DestroySystem), use the equipped tool force (which falls back to 1.0 Hand force if no tool equipped).
+	float EffectiveMiningForce = BestToolForce;
+	if (MiningForce > 1.0f)
+	{
+		EffectiveMiningForce = FMath::Max(MiningForce, BestToolForce);
 	}
 
 	const float Durability = GetTargetedBlockDurability();
@@ -867,48 +967,57 @@ float AChunkActor::GetTargetedBlockPlayRate(float MiningForce, float TimelineLen
 {
 	const float BreakTime = GetTargetedBlockBreakTime(MiningForce);
 	const float Len = FMath::Max(0.01f, TimelineLength);
-	return Len / BreakTime;
+	return Len / FMath::Max(0.01f, BreakTime);
 }
 
 UTexture2D* AChunkActor::GetBlockIconTexture(int32 InBlockID)
 {
 	// Texture path mappings must match EBlockType enum values exactly
-	FString TexturePath;
+	FString TextureName;
 	switch (InBlockID)
 	{
-	case 1:  TexturePath = TEXT("/Game/Textures/Blocks/dirt.dirt"); break;                                   // Dirt
-	case 2:  TexturePath = TEXT("/Game/Textures/Blocks/grass_block_side.grass_block_side"); break;           // Grass
-	case 3:  TexturePath = TEXT("/Game/Textures/Blocks/cobblestone.cobblestone"); break;                     // Cobblestone
-	case 4:  TexturePath = TEXT("/Game/Textures/Blocks/stone.stone"); break;                                 // Stone
-	case 5:  TexturePath = TEXT("/Game/Textures/Blocks/oak_log.oak_log"); break;                             // Wood Log
-	case 6:  TexturePath = TEXT("/Game/Textures/Blocks/oak_planks.oak_planks"); break;                       // Wood Planks
-	case 7:  TexturePath = TEXT("/Game/Textures/Blocks/iron_ore.iron_ore"); break;                           // Iron Ore
-	case 8:  TexturePath = TEXT("/Game/Textures/Blocks/iron_block.iron_block"); break;                       // Iron Block
-	case 9:  TexturePath = TEXT("/Game/Textures/Blocks/gold_ore.gold_ore"); break;                           // Gold Ore
-	case 10: TexturePath = TEXT("/Game/Textures/Blocks/gold_block.gold_block"); break;                       // Gold Block
-	case 11: TexturePath = TEXT("/Game/Textures/Blocks/diamond_ore.diamond_ore"); break;                     // Diamond Ore
-	case 12: TexturePath = TEXT("/Game/Textures/Blocks/diamond_block.diamond_block"); break;                 // Diamond Block
-	case 13: TexturePath = TEXT("/Game/Textures/Blocks/emerald_ore.emerald_ore"); break;                     // Emerald Ore
-	case 14: TexturePath = TEXT("/Game/Textures/Blocks/emerald_block.emerald_block"); break;                 // Emerald Block
-	case 15: TexturePath = TEXT("/Game/Textures/Blocks/crafting_table_front.crafting_table_front"); break;   // Crafting Table
-	case 16: TexturePath = TEXT("/Game/Textures/Blocks/furnace_front.furnace_front"); break;                 // Furnace
-	case 17: TexturePath = TEXT("/Game/Textures/Blocks/leaves.leaves"); break;                               // Leaves
-	case 18: TexturePath = TEXT("/Game/Textures/Blocks/sand.sand"); break;                                   // Sand
-	case 19: TexturePath = TEXT("/Game/Textures/Blocks/torch.torch"); break;                                 // Torch
-	case 20: TexturePath = TEXT("/Game/Textures/Blocks/barrel_side.barrel_side"); break;                     // Barrel
-	case 21: TexturePath = TEXT("/Game/Textures/Blocks/glass.glass"); break;                                 // Glass
-	case 22: TexturePath = TEXT("/Game/Textures/Blocks/oak_planks.oak_planks"); break;                       // Fence
-	case 23: TexturePath = TEXT("/Game/Textures/Blocks/oak_planks.oak_planks"); break;                       // Fence Door
-	case 24: TexturePath = TEXT("/Game/Textures/Blocks/dark_oak_door_bottom.dark_oak_door_bottom"); break;   // Door
-	case 25: TexturePath = TEXT("/Game/Textures/Blocks/stone.stone"); break;                                 // Bedrock
-	case 26: TexturePath = TEXT("/Game/Textures/Blocks/glass.glass"); break;                                 // Water
-	case 27: TexturePath = TEXT("/Game/Textures/Blocks/coal_ore.coal_ore"); break;                           // Coal Ore
+	case 1:  TextureName = TEXT("dirt"); break;                                   // Dirt
+	case 2:  TextureName = TEXT("grass_block_side"); break;                       // Grass
+	case 3:  TextureName = TEXT("cobblestone"); break;                             // Cobblestone
+	case 4:  TextureName = TEXT("stone"); break;                                   // Stone
+	case 5:  TextureName = TEXT("oak_log"); break;                                 // Wood Log
+	case 6:  TextureName = TEXT("oak_planks"); break;                              // Wood Planks
+	case 7:  TextureName = TEXT("iron_ore"); break;                                // Iron Ore
+	case 8:  TextureName = TEXT("iron_block"); break;                              // Iron Block
+	case 9:  TextureName = TEXT("gold_ore"); break;                                // Gold Ore
+	case 10: TextureName = TEXT("gold_block"); break;                              // Gold Block
+	case 11: TextureName = TEXT("diamond_ore"); break;                              // Diamond Ore
+	case 12: TextureName = TEXT("diamond_block"); break;                          // Diamond Block
+	case 13: TextureName = TEXT("emerald_ore"); break;                              // Emerald Ore
+	case 14: TextureName = TEXT("emerald_block"); break;                          // Emerald Block
+	case 15: TextureName = TEXT("crafting_table_front"); break;                    // Crafting Table
+	case 16: TextureName = TEXT("furnace_front"); break;                           // Furnace
+	case 17: TextureName = TEXT("oak_leaves"); break;                              // Leaves (mapped to oak_leaves in Patrix)
+	case 18: TextureName = TEXT("sand"); break;                                    // Sand
+	case 19: TextureName = TEXT("torch"); break;                                   // Torch
+	case 20: TextureName = TEXT("barrel_side"); break;                             // Barrel
+	case 21: TextureName = TEXT("glass"); break;                                   // Glass
+	case 22: TextureName = TEXT("oak_planks"); break;                              // Fence
+	case 23: TextureName = TEXT("oak_planks"); break;                              // Fence Door
+	case 24: TextureName = TEXT("dark_oak_door_bottom"); break;                    // Door
+	case 25: TextureName = TEXT("stone"); break;                                   // Bedrock
+	case 26: TextureName = TEXT("glass"); break;                                   // Water
+	case 27: TextureName = TEXT("coal_ore"); break;                                // Coal Ore
 	default:
-		TexturePath = TEXT("/Game/Textures/Blocks/dirt.dirt");
+		TextureName = TEXT("dirt");
 		break;
 	}
 
-	return Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *TexturePath));
+	// 1. Try high-res Patrix texture pack first
+	const FString PatrixPath = FString::Printf(TEXT("/Game/Patrix_Texture_Pack/textures/block/%s.%s"), *TextureName, *TextureName);
+	if (UTexture2D* PatrixTex = Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *PatrixPath)))
+	{
+		return PatrixTex;
+	}
+
+	// 2. Fallback to /Game/Textures/Blocks/
+	const FString FallbackPath = FString::Printf(TEXT("/Game/Textures/Blocks/%s.%s"), *TextureName, *TextureName);
+	return Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *FallbackPath));
 }
 
 UTexture2D* AChunkActor::GetBlockIconFromSlice(int32 TextureSliceIndex)
@@ -944,7 +1053,7 @@ UTexture2D* AChunkActor::GetBlockIconFromSlice(int32 TextureSliceIndex)
 		TEXT("grass_block_top"),
 		TEXT("iron_block"),
 		TEXT("iron_ore"),
-		TEXT("leaves"),
+		TEXT("oak_leaves"), // mapped from leaves for Patrix pack
 		TEXT("oak_log"),
 		TEXT("oak_log_top"),
 		TEXT("oak_planks"),
@@ -959,224 +1068,14 @@ UTexture2D* AChunkActor::GetBlockIconFromSlice(int32 TextureSliceIndex)
 		Name = SliceTextureNames[TextureSliceIndex];
 	}
 
-	const FString Path = FString::Printf(TEXT("/Game/Textures/Blocks/%s.%s"), *Name, *Name);
-	return Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *Path));
-}
-
-void AChunkActor::ProcessEvent(UFunction* Function, void* Parms)
-{
-	if (Function)
+	// 1. Try high-res Patrix texture pack first
+	const FString PatrixPath = FString::Printf(TEXT("/Game/Patrix_Texture_Pack/textures/block/%s.%s"), *Name, *Name);
+	if (UTexture2D* PatrixTex = Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *PatrixPath)))
 	{
-		const FString FuncNameStr = Function->GetName();
-
-		if (FuncNameStr.Contains(TEXT("GetHitFace"), ESearchCase::IgnoreCase))
-		{
-			FVector HitLoc = LastTargetedHitLocation;
-			for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
-			{
-				FProperty* Prop = *PropIt;
-				if (FStructProperty* SP = CastField<FStructProperty>(Prop))
-				{
-					if (SP->Struct == TBaseStructure<FVector>::Get())
-					{
-						HitLoc = *(FVector*)Prop->ContainerPtrToValuePtr<void>(Parms);
-					}
-				}
-			}
-
-			const int32 FaceID = GetHitFaceAtLocation(HitLoc);
-			LastTargetedHitLocation = HitLoc;
-
-			// Project Outward Normal for the hit face:
-			// Option 0 = Front (+X), Option 1 = Back (-X), Option 2 = Left (-Y), Option 3 = Right (+Y), Option 4 = Top (+Z), Option 5 = Bottom (-Z)
-			FVector OutwardNormal = FVector::UpVector;
-			switch (FaceID)
-			{
-			case 0: OutwardNormal = FVector(1.0f, 0.0f, 0.0f); break;   // Front (+X)
-			case 1: OutwardNormal = FVector(-1.0f, 0.0f, 0.0f); break;  // Back (-X)
-			case 2: OutwardNormal = FVector(0.0f, -1.0f, 0.0f); break;  // Left (-Y)
-			case 3: OutwardNormal = FVector(0.0f, 1.0f, 0.0f); break;   // Right (+Y)
-			case 4: OutwardNormal = FVector(0.0f, 0.0f, 1.0f); break;   // Top (+Z)
-			case 5: OutwardNormal = FVector(0.0f, 0.0f, -1.0f); break;  // Bottom (-Z)
-			default: OutwardNormal = FVector(0.0f, 0.0f, 1.0f); break;
-			}
-
-			if (WorldGenerator.IsValid())
-			{
-				// Step opposite to outward normal (into the block interior)
-				const FVector SamplePos = HitLoc - (OutwardNormal * (BlockScale * 0.25f));
-				int32 BX, BY, BZ;
-				WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
-
-				uint8 TargetedBlockID = 0;
-				if (WorldGenerator->GetVoxelAt(BX, BY, BZ, TargetedBlockID) && TargetedBlockID != 0)
-				{
-					LastTargetedVoxelCoord = FIntVector(BX, BY, BZ);
-				}
-				else
-				{
-					// Fallback: camera line trace
-					APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-					if (PC && PC->PlayerCameraManager)
-					{
-						const FVector CamStart = PC->PlayerCameraManager->GetCameraLocation();
-						const FVector CamEnd = CamStart + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 6.0f));
-						FHitResult Hit;
-						FCollisionQueryParams QParams;
-						QParams.AddIgnoredActor(PC->GetPawn());
-						if (GetWorld()->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
-						{
-							const FVector InsidePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
-							int32 FBX, FBY, FBZ;
-							WorldGenerator->WorldLocationToVoxelCoord(InsidePos, FBX, FBY, FBZ);
-							LastTargetedVoxelCoord = FIntVector(FBX, FBY, FBZ);
-						}
-					}
-				}
-			}
-
-			for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
-			{
-				FProperty* Prop = *PropIt;
-				if (FIntProperty* IP = CastField<FIntProperty>(Prop))
-				{
-					if (Prop->HasAnyPropertyFlags(CPF_OutParm | CPF_ReturnParm))
-					{
-						*(int32*)Prop->ContainerPtrToValuePtr<void>(Parms) = FaceID;
-					}
-				}
-				else if (FByteProperty* BP = CastField<FByteProperty>(Prop))
-				{
-					if (Prop->HasAnyPropertyFlags(CPF_OutParm | CPF_ReturnParm))
-					{
-						*(uint8*)Prop->ContainerPtrToValuePtr<void>(Parms) = static_cast<uint8>(FaceID);
-					}
-				}
-			}
-			return;
-		}
-		else if (FuncNameStr.Contains(TEXT("GetBlockData"), ESearchCase::IgnoreCase))
-		{
-			uint8 TargetBlockID = 0;
-			if (WorldGenerator.IsValid() && LastTargetedVoxelCoord.X >= 0)
-			{
-				WorldGenerator->GetVoxelAt(LastTargetedVoxelCoord.X, LastTargetedVoxelCoord.Y, LastTargetedVoxelCoord.Z, TargetBlockID);
-			}
-
-			// If cached voxel is air or uninitialized, perform live camera line trace
-			if (TargetBlockID == 0 && WorldGenerator.IsValid())
-			{
-				APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-				if (PC && PC->PlayerCameraManager)
-				{
-					const FVector CamStart = PC->PlayerCameraManager->GetCameraLocation();
-					const FVector CamEnd = CamStart + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 6.0f));
-					FHitResult Hit;
-					FCollisionQueryParams QParams;
-					QParams.AddIgnoredActor(PC->GetPawn());
-					if (GetWorld()->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
-					{
-						const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
-						int32 BX, BY, BZ;
-						WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
-						LastTargetedVoxelCoord = FIntVector(BX, BY, BZ);
-						LastTargetedHitLocation = Hit.ImpactPoint;
-						WorldGenerator->GetVoxelAt(LastTargetedVoxelCoord.X, LastTargetedVoxelCoord.Y, LastTargetedVoxelCoord.Z, TargetBlockID);
-					}
-				}
-			}
-
-			UDataTable* Table = WorldGenerator.IsValid() ? WorldGenerator->BlockDataTable : nullptr;
-			if (!Table)
-			{
-				Table = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/Data/Block_DataTable.Block_DataTable")));
-			}
-
-			if (Table && TargetBlockID != 0)
-			{
-				const UScriptStruct* RowStruct = Table->GetRowStruct();
-				const uint8* FoundRow = nullptr;
-
-				for (auto It = Table->GetRowMap().CreateConstIterator(); It; ++It)
-				{
-					const uint8* RowData = It.Value();
-					if (!RowData) continue;
-
-					for (TFieldIterator<FProperty> PropIt(RowStruct); PropIt; ++PropIt)
-					{
-						FProperty* Prop = *PropIt;
-						if (Prop->GetName().Contains(TEXT("BlockID"), ESearchCase::IgnoreCase))
-						{
-							int32 RowBlockID = -1;
-							if (FIntProperty* IP = CastField<FIntProperty>(Prop))
-								RowBlockID = IP->GetPropertyValue_InContainer(RowData);
-							else if (FByteProperty* BP = CastField<FByteProperty>(Prop))
-								RowBlockID = BP->GetPropertyValue_InContainer(RowData);
-
-							if (RowBlockID == static_cast<int32>(TargetBlockID))
-							{
-								FoundRow = RowData;
-								break;
-							}
-						}
-					}
-					if (FoundRow) break;
-				}
-
-				if (FoundRow)
-				{
-					for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
-					{
-						FProperty* Prop = *PropIt;
-						if (FStructProperty* SP = CastField<FStructProperty>(Prop))
-						{
-							if (Prop->HasAnyPropertyFlags(CPF_OutParm | CPF_ReturnParm))
-							{
-								SP->CopyCompleteValue(Prop->ContainerPtrToValuePtr<void>(Parms), FoundRow);
-								break;
-							}
-						}
-					}
-				}
-			}
-			return;
-		}
-		else if (FuncNameStr.Contains(TEXT("StartBreak"), ESearchCase::IgnoreCase))
-		{
-			// Ensure LastTargetedVoxelCoord is valid and points to a solid block
-			uint8 TargetBlock = 0;
-			if (WorldGenerator.IsValid() && LastTargetedVoxelCoord.X >= 0)
-			{
-				WorldGenerator->GetVoxelAt(LastTargetedVoxelCoord.X, LastTargetedVoxelCoord.Y, LastTargetedVoxelCoord.Z, TargetBlock);
-			}
-
-			if (TargetBlock == 0 && WorldGenerator.IsValid())
-			{
-				APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-				if (PC && PC->PlayerCameraManager)
-				{
-					const FVector CamStart = PC->PlayerCameraManager->GetCameraLocation();
-					const FVector CamEnd = CamStart + (PC->PlayerCameraManager->GetActorForwardVector() * (BlockScale * 6.0f));
-					FHitResult Hit;
-					FCollisionQueryParams QParams;
-					QParams.AddIgnoredActor(PC->GetPawn());
-					if (GetWorld()->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
-					{
-						const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
-						int32 BX, BY, BZ;
-						WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
-						LastTargetedVoxelCoord = FIntVector(BX, BY, BZ);
-						LastTargetedHitLocation = Hit.ImpactPoint;
-					}
-				}
-			}
-
-			// Forward to BP_ChunkActor's EventGraph so it receives Event StartBreak(MiningForce),
-			// waits for GetTargetedBlockBreakTime duration, and calls BreakTargetedBlock()!
-			Super::ProcessEvent(Function, Parms);
-			return;
-		}
+		return PatrixTex;
 	}
 
-	Super::ProcessEvent(Function, Parms);
+	// 2. Fallback to /Game/Textures/Blocks/
+	const FString FallbackPath = FString::Printf(TEXT("/Game/Textures/Blocks/%s.%s"), *Name, *Name);
+	return Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *FallbackPath));
 }
