@@ -1,6 +1,7 @@
 #include "WorldGenerator.h"
 #include "ChunkActor.h"
 #include "BlockItemPickup.h"
+#include "ChaosBlockDestructionActor.h"
 #include "BlockHighlightActor.h"
 #include "UObject/Interface.h"
 #include "Engine/World.h"
@@ -882,6 +883,7 @@ bool AWorldGenerator::BreakBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ
 				(static_cast<float>(VoxelZ) + 0.5f) * BlockScale
 			);
 			SpawnBlockItemDrop(VoxelCenter, OutDroppedBlockID);
+			SpawnChaosBlockDestruction(VoxelCenter, OutDroppedBlockID, LastTargetedHitNormal, LastTargetedHitPoint);
 
 			// Consume durability from the appropriate equipped tool in Baubles
 			APlayerController* PC = GetWorld()->GetFirstPlayerController();
@@ -944,6 +946,47 @@ void AWorldGenerator::SpawnBlockItemDrop(const FVector& WorldLocation, uint8 Dro
 	if (Pickup)
 	{
 		Pickup->InitializePickup(DroppedBlockID, 1, TerrainMaterial);
+	}
+}
+
+void AWorldGenerator::SpawnChaosBlockDestruction(
+	const FVector& VoxelCenter,
+	uint8 BlockID,
+	const FVector& HitNormal,
+	const FVector& HitPoint
+)
+{
+	// Bedrock, Air, and non-solid Torch do not fracture into debris
+	if (BlockID == 0 || BlockID == static_cast<uint8>(EBlockType::Bedrock) || BlockID == static_cast<uint8>(EBlockType::Torch) || BlockID == 19)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const FTransform SpawnTransform(FRotator::ZeroRotator, VoxelCenter);
+	AChaosBlockDestructionActor* DestructionActor = World->SpawnActorDeferred<AChaosBlockDestructionActor>(
+		AChaosBlockDestructionActor::StaticClass(),
+		SpawnTransform,
+		nullptr,
+		nullptr,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn
+	);
+
+	if (DestructionActor)
+	{
+		DestructionActor->InitializeDestruction(
+			BlockID,
+			HitNormal,
+			HitPoint.IsNearlyZero() ? VoxelCenter : HitPoint,
+			BlockScale,
+			TerrainMaterial
+		);
+		DestructionActor->FinishSpawning(SpawnTransform);
 	}
 }
 
@@ -1066,6 +1109,9 @@ bool AWorldGenerator::TraceForBlock(
 	{
 		if (Hit.GetActor() && Hit.GetActor()->IsA<AChunkActor>())
 		{
+			LastTargetedHitNormal = Hit.ImpactNormal;
+			LastTargetedHitPoint = Hit.ImpactPoint;
+
 			// Step inward along normal to identify the clicked block
 			const FVector BreakSamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
 			int32 BX, BY, BZ;
@@ -1302,6 +1348,9 @@ void AWorldGenerator::UpdateTargetBlockHighlight()
 	{
 		if (Hit.GetActor() && Hit.GetActor()->IsA<AChunkActor>())
 		{
+			LastTargetedHitNormal = Hit.ImpactNormal;
+			LastTargetedHitPoint = Hit.ImpactPoint;
+
 			const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScale * 0.25f));
 			int32 BX, BY, BZ;
 			WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);

@@ -42,7 +42,8 @@ Core coordinator actor placed in the world.
   - `DayNightCycleSystem`: 20-minute cycle, directional sun rotation, daylight queries.
   - `MobSpawnerSystem`: Spawns hostile mobs in dark areas, torch avoidance, despawning.
 - **Key Functions**:
-  - `bool BreakBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, uint8& OutDroppedBlockID)`: Destroys block, updates meshes, spawns pickup, and consumes Baubles tool durability.
+  - `bool BreakBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, uint8& OutDroppedBlockID)`: Destroys block, updates meshes, spawns physical Chaos destruction debris, spawns pickup, and consumes Baubles tool durability.
+  - `void SpawnChaosBlockDestruction(const FVector& VoxelCenter, uint8 BlockID, const FVector& HitNormal, const FVector& HitPoint)`: Spawns and initializes non-deterministic physical Chaos debris for broken blocks.
   - `bool QueueBlockBreakAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, float MiningForceOverride)`: Queues block break, automatically querying `UBaublesSystem` for optimal tool force if override is unset.
   - `bool PlaceBlock(const FVector& WorldLocation, uint8 BlockID)`: Validates placement (including torch resting constraints) and updates meshes.
   - `bool InteractWithTargetBlock()`: Proximity right-click interaction with Crafting Tables and Furnaces.
@@ -105,7 +106,26 @@ Physical voxel item drops in the world.
 
 ---
 
-### 5. `UBaublesSystem` (`UActorComponent`)
+### 5. `AChaosBlockDestructionActor` (`AActor`)
+Real-time physical block fracture system powered by Unreal Engine 5.8 Chaos physics.
+
+- **Non-Deterministic Fracturing**:
+  - Dynamically fractures broken blocks into $8\text{--}18$ irregular 3D polyhedral cells using randomized 3D cutting planes and perturbed internal lattice vertices.
+- **Visual Texture Mapping**:
+  - Outer fragment faces align with the original block's exact sub-UV face coordinates and texture slices from `/Game/Materials/M_Global.M_Global`.
+  - Interior fracture faces automatically sample authentic interior block slices (e.g., Dirt for Grass, Wood Planks for Logs, Stone for Ores).
+- **Chaos Physics Simulation**:
+  - Each fragment component builds its own convex collision hull (`AddCollisionConvexMesh`) with `bUseComplexAsSimpleCollision = false`.
+  - Simulates active rigid-body dynamics via the Chaos solver (`SetSimulatePhysics(true)`), colliding against chunk procedural meshes and ground geometry.
+  - Receives non-deterministic explosive radial bursts, impact directional bias along the mining strike normal, upward pop, and randomized 3D angular torque.
+- **Lifecycle & Despawn**:
+  - Fragments simulate freely for `SimulationLifetime` ($2.2\text{ s}$).
+  - Smoothly shrink and fade over `FadeDuration` ($0.8\text{ s}$).
+  - Cleans up and destroys all components upon completion, ensuring zero memory leaks or physics solver overhead.
+
+---
+
+### 6. `UBaublesSystem` (`UActorComponent`)
 Player equipment component managing dedicated tool slots.
 
 - **Slots**:

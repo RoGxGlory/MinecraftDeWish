@@ -138,6 +138,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "World Generation|Interaction")
 	bool BreakBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, uint8& OutDroppedBlockID);
 
+	/** Spawns non-deterministic Chaos destruction fragments for the destroyed block */
+	UFUNCTION(BlueprintCallable, Category = "World Generation|Chaos")
+	void SpawnChaosBlockDestruction(
+		const FVector& VoxelCenter,
+		uint8 BlockID,
+		const FVector& HitNormal = FVector::UpVector,
+		const FVector& HitPoint = FVector::ZeroVector
+	);
+
 	/** Place block at world location */
 	UFUNCTION(BlueprintCallable, Category = "World Generation|Interaction")
 	bool PlaceBlock(const FVector& WorldLocation, uint8 BlockID);
@@ -285,6 +294,10 @@ private:
 	void GenerateVillageHouse(AChunkActor* Chunk, int32 CenterX, int32 CenterY, int32 SurfaceZ);
 
 	void SpawnBlockItemDrop(const FVector& WorldLocation, uint8 DroppedBlockID);
+
+	/** Tracked strike normal and impact point for directional Chaos destruction debris */
+	FVector LastTargetedHitNormal = FVector::UpVector;
+	FVector LastTargetedHitPoint = FVector::ZeroVector;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ABlockHighlightActor> BlockHighlightActor = nullptr;
