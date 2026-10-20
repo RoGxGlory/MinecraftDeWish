@@ -1095,3 +1095,102 @@ UTexture2D* AChunkActor::GetBlockIconFromSlice(int32 TextureSliceIndex)
 	const FString FallbackPath = FString::Printf(TEXT("/Game/Textures/Blocks/%s.%s"), *Name, *Name);
 	return Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *FallbackPath));
 }
+
+uint8 AChunkActor::GetGlobalTargetedBlockID(UObject* WorldContextObject, APlayerController* PlayerController)
+{
+	if (!PlayerController || !PlayerController->PlayerCameraManager)
+	{
+		return 0;
+	}
+
+	UWorld* World = nullptr;
+	if (WorldContextObject)
+	{
+		World = WorldContextObject->GetWorld();
+	}
+	if (!World && PlayerController)
+	{
+		World = PlayerController->GetWorld();
+	}
+	if (!World) return 0;
+
+	const FVector CamStart = PlayerController->PlayerCameraManager->GetCameraLocation();
+	const FVector CamEnd = CamStart + (PlayerController->PlayerCameraManager->GetActorForwardVector() * 1000.0f);
+
+	FHitResult Hit;
+	FCollisionQueryParams QParams;
+	QParams.AddIgnoredActor(PlayerController->GetPawn());
+
+	if (World->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
+	{
+		if (AChunkActor* HitChunk = Cast<AChunkActor>(Hit.GetActor()))
+		{
+			if (HitChunk->WorldGenerator.IsValid())
+			{
+				AWorldGenerator* WorldGen = HitChunk->WorldGenerator.Get();
+				const float BlockScaleVal = HitChunk->BlockScale;
+
+				const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScaleVal * 0.25f));
+				int32 BX, BY, BZ;
+				WorldGen->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+
+				uint8 BlockID = 0;
+				WorldGen->GetVoxelAt(BX, BY, BZ, BlockID);
+				return BlockID;
+			}
+		}
+	}
+
+	return 0;
+}
+
+FIntVector AChunkActor::GetGlobalTargetedBlockVoxel(UObject* WorldContextObject, APlayerController* PlayerController)
+{
+	if (!PlayerController || !PlayerController->PlayerCameraManager)
+	{
+		return FIntVector(-1, -1, -1);
+	}
+
+	UWorld* World = nullptr;
+	if (WorldContextObject)
+	{
+		World = WorldContextObject->GetWorld();
+	}
+	if (!World && PlayerController)
+	{
+		World = PlayerController->GetWorld();
+	}
+	if (!World)
+	{
+		return FIntVector(-1, -1, -1);
+	}
+
+	const FVector CamStart = PlayerController->PlayerCameraManager->GetCameraLocation();
+	const FVector CamEnd = CamStart + (PlayerController->PlayerCameraManager->GetActorForwardVector() * 1000.0f);
+
+	FHitResult Hit;
+	FCollisionQueryParams QParams;
+	QParams.AddIgnoredActor(PlayerController->GetPawn());
+
+	if (World->LineTraceSingleByChannel(Hit, CamStart, CamEnd, ECC_WorldStatic, QParams))
+	{
+		if (AChunkActor* HitChunk = Cast<AChunkActor>(Hit.GetActor()))
+		{
+			if (HitChunk->WorldGenerator.IsValid())
+			{
+				AWorldGenerator* WorldGen = HitChunk->WorldGenerator.Get();
+				const float BlockScaleVal = HitChunk->BlockScale;
+
+				// Recul léger vers l'intérieur du bloc visé
+				const FVector SamplePos = Hit.ImpactPoint - (Hit.ImpactNormal * (BlockScaleVal * 0.25f));
+
+				int32 BX, BY, BZ;
+				WorldGen->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
+
+				return FIntVector(BX, BY, BZ);
+			}
+		}
+	}
+
+	return FIntVector(-1, -1, -1);
+}

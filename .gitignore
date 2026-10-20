@@ -73,3 +73,8 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+implementation_plan.md
+walkthrough.md
+.aider*
+Automation_MinecraftDeWish.slnx
+MinecraftDeWish.slnx

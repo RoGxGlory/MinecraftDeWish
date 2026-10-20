@@ -159,6 +159,14 @@ public:
 	UPROPERTY()
 	FIntVector LastTargetedVoxelCoord = FIntVector(-1, -1, -1);
 
+	/** Global static helper to get the targeted block ID from any player controller camera without requiring a chunk reference */
+	UFUNCTION(BlueprintPure, Category = "Voxel|Mining", meta = (WorldContext = "WorldContextObject"))
+	static uint8 GetGlobalTargetedBlockID(UObject* WorldContextObject, APlayerController* PlayerController);
+
+	/** Global static helper to get the targeted voxel world coordinate (X, Y, Z) from any player controller camera */
+	UFUNCTION(BlueprintCallable, Category = "Voxel|Mining", meta = (WorldContext = "WorldContextObject"))
+	static FIntVector GetGlobalTargetedBlockVoxel(UObject* WorldContextObject, APlayerController* PlayerController);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
