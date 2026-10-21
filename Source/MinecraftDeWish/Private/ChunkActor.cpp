@@ -150,6 +150,26 @@ bool AChunkActor::ShouldRenderFace(uint8 CurrentBlockID, int32 NeighborX, int32 
 	return true;
 }
 
+void AChunkActor::SetBlockWithMeta(int32 X, int32 Y, int32 Z, uint8 BlockID, uint8 MetaRotation)
+{
+	if (IsValidCoord(X, Y, Z))
+	{
+		const int32 Index = GetBlockIndex(X, Y, Z);
+		BlockData[Index] = BlockID;
+
+		if (MetaRotation > 0)
+		{
+			BlockMetadata.Add(Index, MetaRotation);
+		}
+		else
+		{
+			BlockMetadata.Remove(Index);
+		}
+
+		bIsModified = true;
+	}
+}
+
 void AChunkActor::AddFace(
 	FChunkMeshData& MeshData,
 	const FVector& BlockPos,
@@ -367,11 +387,34 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshD
 					continue;
 				}
 
+				// 1. Fetch rotation metadata (0 = North/Default, 1 = East, 2 = South, 3 = West)
+				uint8 Meta = 0;
+				if (const uint8* FoundMeta = BlockMetadata.Find(GetBlockIndex(X, Y, Z)))
+				{
+					Meta = *FoundMeta;
+				}
+
 				const FVector BlockPos(
 					static_cast<float>(X) * BlockScale,
 					static_cast<float>(Y) * BlockScale,
 					static_cast<float>(Z) * BlockScale
 				);
+
+				// 2. Helper to trick GetTextureForBlock into returning the correct rotated side
+				auto GetLocalFace = [](EBlockFace WorldFace, uint8 Rotation) -> EBlockFace
+					{
+						if (WorldFace == EBlockFace::Top || WorldFace == EBlockFace::Bottom || Rotation == 0) return WorldFace;
+
+						static const EBlockFace OrderedFaces[4] = { EBlockFace::North, EBlockFace::East, EBlockFace::South, EBlockFace::West };
+						int32 FaceIdx = 0;
+						if (WorldFace == EBlockFace::East) FaceIdx = 1;
+						else if (WorldFace == EBlockFace::South) FaceIdx = 2;
+						else if (WorldFace == EBlockFace::West) FaceIdx = 3;
+
+						// Reverse the shift to map the world face back to the block's local texture face
+						const int32 LocalIdx = (FaceIdx - Rotation + 4) % 4;
+						return OrderedFaces[LocalIdx];
+					};
 
 				// Determine which mesh buffer to write to based on block solidity
 				const bool bIsNonSolid = FBlockHelpers::IsNonSolidBlock(BlockID);
@@ -403,28 +446,28 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshD
 				// North (+X)
 				if (ShouldRenderFace(BlockID, X + 1, Y, Z))
 				{
-					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::North) : 0;
+					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, GetLocalFace(EBlockFace::North, Meta)) : 0;
 					AddFace(TargetMeshData, BlockPos, EBlockFace::North, Tex);
 				}
 
 				// South (-X)
 				if (ShouldRenderFace(BlockID, X - 1, Y, Z))
 				{
-					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::South) : 0;
+					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, GetLocalFace(EBlockFace::South, Meta)) : 0;
 					AddFace(TargetMeshData, BlockPos, EBlockFace::South, Tex);
 				}
 
 				// East (+Y)
 				if (ShouldRenderFace(BlockID, X, Y + 1, Z))
 				{
-					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::East) : 0;
+					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, GetLocalFace(EBlockFace::East, Meta)) : 0;
 					AddFace(TargetMeshData, BlockPos, EBlockFace::East, Tex);
 				}
 
 				// West (-Y)
 				if (ShouldRenderFace(BlockID, X, Y - 1, Z))
 				{
-					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::West) : 0;
+					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, GetLocalFace(EBlockFace::West, Meta)) : 0;
 					AddFace(TargetMeshData, BlockPos, EBlockFace::West, Tex);
 				}
 			}

@@ -189,7 +189,8 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 	}
 	if (Chunk->IsValidCoord(MaxX - 1, MaxY - 1, FloorZ))
 	{
-		Chunk->SetBlock(MaxX - 1, MaxY - 1, FloorZ, static_cast<uint8>(EBlockType::Furnace));
+		// 0 = North, 1 = East, 2 = South, 3 = West
+		Chunk->SetBlockWithMeta(MaxX - 1, MaxY - 1, FloorZ, static_cast<uint8>(EBlockType::Furnace), 3);
 	}
 	// Torch placed directly on the floor
 	if (Chunk->IsValidCoord(CenterX, CenterY, FloorZ))

@@ -167,6 +167,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Voxel|Mining", meta = (WorldContext = "WorldContextObject"))
 	static FIntVector GetGlobalTargetedBlockVoxel(UObject* WorldContextObject, APlayerController* PlayerController);
 
+	/** Sparse map storing rotation/state data only for blocks that need it (Key: BlockIndex, Value: Meta) */
+	UPROPERTY()
+	TMap<int32, uint8> BlockMetadata;
+
+	void SetBlockWithMeta(int32 X, int32 Y, int32 Z, uint8 BlockID, uint8 MetaRotation);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
