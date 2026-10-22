@@ -355,6 +355,19 @@ void AChunkActor::AddFace(
 		MeshData.UV0.Add(FVector2D(0.0f, 0.0f));
 	}
 
+	// Define which textures represent natural terrain that should receive noise blending
+	const bool bIsNaturalTerrain = (
+		TextureIndex == 27 || // grass_block_top
+		TextureIndex == 26 || // grass_block_side
+		TextureIndex == 14 || // dirt
+		TextureIndex == 6 || // cobblestone
+		TextureIndex == 35 || // stone
+		TextureIndex == 34    // sand
+		);
+
+	// 1.0f = Blend Noise, 0.0f = No Blending
+	const float BlendMask = bIsNaturalTerrain ? 1.0f : 0.0f;
+
 	// UV1.X stores the Texture2DArray slice index
 	const float TexSlice = static_cast<float>(TextureIndex);
 	MeshData.UV1.Add(FVector2D(TexSlice, 0.0f));
@@ -362,8 +375,8 @@ void AChunkActor::AddFace(
 	MeshData.UV1.Add(FVector2D(TexSlice, 0.0f));
 	MeshData.UV1.Add(FVector2D(TexSlice, 0.0f));
 
-	// Vertex colors also store the texture index in R for compatibility
-	FLinearColor VColor(TexSlice, 0.0f, 0.0f, 1.0f);
+	// Store TexSlice in R, and our BlendMask in G
+	FLinearColor VColor(TexSlice, BlendMask, 0.0f, 1.0f);
 	MeshData.VertexColors.Add(VColor);
 	MeshData.VertexColors.Add(VColor);
 	MeshData.VertexColors.Add(VColor);
