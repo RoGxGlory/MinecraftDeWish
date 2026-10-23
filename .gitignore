@@ -73,6 +73,11 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+
+# Local tooling / one-shot editor scripts (not part of the project)
+/Tools/
+*.bak_blend
+
 implementation_plan.md
 walkthrough.md
 .aider*

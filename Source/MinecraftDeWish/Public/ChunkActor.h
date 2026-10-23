@@ -69,6 +69,14 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voxel")
 	bool bIsModified = false;
 
+	/** Randomly phase-shift isotropic top-face UVs per block so the repeated texture grid is no longer visible */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel|Rendering")
+	bool bStochasticTopUVs = true;
+
+	/** Enables biome cross-fading of top-face textures (blend data comes from the WorldGenerator) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel|Rendering")
+	bool bEnableTopTextureBlending = true;
+
 	/** Flat block array (Size: 16 * 16 * ChunkHeight) */
 	TArray<uint8> BlockData;
 
@@ -191,7 +199,10 @@ private:
 		FChunkMeshData& MeshData,
 		const FVector& BlockPos,
 		EBlockFace Face,
-		int32 TextureIndex
+		uint8 BlockID,
+		int32 TextureIndex,
+		int32 SecondaryTextureIndex = -1,
+		const FVector4& CornerBlendWeights = FVector4(0.0, 0.0, 0.0, 0.0)
 	) const;
 
 	void AddTorchMesh(

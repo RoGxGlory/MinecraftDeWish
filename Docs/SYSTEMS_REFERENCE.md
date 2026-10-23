@@ -243,3 +243,36 @@ Unified terrain shader sampling 32×32 texture arrays via `UV0` (face coordinate
   - Red Channel (Smoothness) $\rightarrow$ `OneMinus` $\rightarrow$ Roughness.
   - Green Channel (Reflectance) $\rightarrow$ Metallic.
   - Alpha Channel $\rightarrow$ Multiply with Base Color $\rightarrow$ Emissive.
+
+#### Vertex attribute contract (mesh $\rightarrow$ material)
+
+| Attribute | Channel | Meaning |
+|---|---|---|
+| `UV0.XY` | – | Face UVs (0..1), rotated per block and phase-shifted on isotropic tops |
+| `UV1.X` | – | Primary `Texture2DArray` slice index |
+| `UV1.Y` | – | Secondary (neighbouring biome) slice index, top faces only |
+| `VertexColor.R` | R | Slice index (legacy path, mirrors `UV1.X`) |
+| `VertexColor.G` | G | Tiling-breakup mask (`1` = natural terrain, `0` = constructed blocks) |
+| `VertexColor.B` | B | Biome blend weight `0..0.5`, interpolated per face corner |
+
+#### Biome cross-fade
+
+`M_Global` adds a second pair of array samples (`Base_Color_Blend`, `Normals_Blend`) whose slice comes from `UV1.Y`:
+
+```
+ComponentMask(G) of UV1 --> AppendVector(UV0, UV1.G) --> Base_Color_Blend / Normals_Blend
+Primary BaseColor chain --Lerp(A)--> LinearInterpolate_2 --> BaseColor
+Base_Color_Blend --------Lerp(B)-->            ^ (Alpha = VertexColor.B)
+Primary normal chain -----Lerp(A)--> LinearInterpolate_3 --> FlattenNormal.Normal
+Normals_Blend -----------Lerp(B)-->            ^ (Alpha = VertexColor.B)
+```
+
+- Non-top faces write `UV1.Y = UV1.X` and `VertexColor.B = 0`, so the extra samples resolve to the primary slice and the lerp is a no-op.
+- The weight is capped at `0.5`, so a block's own texture always stays dominant and the transition is symmetric on both sides of a border.
+- Driven by `AWorldGenerator::GetSurfaceMaterialWeights()` (smooth Grass/Sand/Stone fields that mirror `GetBiomeAt()` thresholds and add a coordinate warp + high-frequency jitter) and sampled per face corner in `AChunkActor::GenerateMeshData()`.
+
+#### Tiling-grid dithering
+
+`AChunkActor::bStochasticTopUVs` gives every isotropic top face a deterministic per-block UV phase offset (derived from the block's world position). The UVs are intentionally left outside `[0,1]` so the sampler's Wrap mode tiles them; applying `Frac` would collapse the quad onto a single texel.
+
+Tunables (`AWorldGenerator`): `BiomeBlendWidth` (band width), `BiomeBlendNoise` (border interlock), `BiomeBlendWarp` (large-scale meander), `BiomeBlendStrength` (0 disables).

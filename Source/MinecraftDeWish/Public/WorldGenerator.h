@@ -115,6 +115,49 @@ public:
 	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
 	int32 GetTextureForBlock(uint8 BlockID, EBlockFace Face) const;
 
+	/**
+	 * True if the top/bottom face of this block uses a rotationally symmetric (isotropic) texture,
+	 * i.e. it can be rotated and phase-shifted per block without looking wrong.
+	 * Deliberately keyed on the block ID rather than a texture slice index, because the slice
+	 * indices come from Block_DataTable and are not stable.
+	 */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
+	bool IsTopFaceIsotropic(uint8 BlockID) const;
+
+	/** True for natural terrain blocks that should receive the world-space tiling-breakup mask */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
+	bool IsNaturalTerrainBlock(uint8 BlockID) const;
+
+	// ==================== TOP TEXTURE BLENDING ====================
+
+	/** Enables smooth cross-fading of top-face textures between neighbouring biomes */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending")
+	bool bEnableTopTextureBlending = true;
+
+	/** Width of the biome cross-fade band in biome-field units. Larger = wider, softer transitions. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "0.30"))
+	float BiomeBlendWidth = 0.06f;
+
+	/** High-frequency field jitter that makes biome borders interlock organically instead of forming clean lines */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "0.25"))
+	float BiomeBlendNoise = 0.035f;
+
+	/** Low-frequency world-space warp (in blocks) that pushes biome borders around */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "32.0"))
+	float BiomeBlendWarp = 4.0f;
+
+	/** Overall strength of the top-texture cross-fade (0 = disabled, 1 = full) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BiomeBlendStrength = 1.0f;
+
+	/**
+	 * Evaluates the normalized surface-material weights of a world column
+	 * (Grass / Sand / Stone). Used by chunk meshing to splat top textures
+	 * smoothly between biomes. The values always sum to 1.
+	 */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
+	void GetSurfaceMaterialWeights(int32 WorldX, int32 WorldY, float& OutGrass, float& OutSand, float& OutStone) const;
+
 	/** Returns true if the block is visually transparent (e.g. Glass, Leaves, Water) */
 	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
 	bool IsBlockTransparent(uint8 BlockID) const;

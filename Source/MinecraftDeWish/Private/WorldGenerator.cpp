@@ -332,6 +332,99 @@ int32 AWorldGenerator::GetTextureForBlock(uint8 BlockID, EBlockFace Face) const
 	return 0;
 }
 
+bool AWorldGenerator::IsTopFaceIsotropic(uint8 BlockID) const
+{
+	switch (static_cast<EBlockType>(BlockID))
+	{
+	case EBlockType::Grass:
+	case EBlockType::Dirt:
+	case EBlockType::Cobblestone:
+	case EBlockType::Stone:
+	case EBlockType::Sand:
+	case EBlockType::Wood_Log:       // ring pattern on the top/bottom caps
+	case EBlockType::Iron_Ore:
+	case EBlockType::Iron_Block:
+	case EBlockType::Gold_Ore:
+	case EBlockType::Gold_Block:
+	case EBlockType::Diamond_Ore:
+	case EBlockType::Diamond_Block:
+	case EBlockType::Emerald_Ore:
+	case EBlockType::Emerald_Block:
+	case EBlockType::Coal_Ore:
+	case EBlockType::Leaves:
+	case EBlockType::Glass:
+		return true;
+
+	default:
+		// Planks, crafting tables, furnaces, barrels, doors... are directional.
+		return false;
+	}
+}
+
+bool AWorldGenerator::IsNaturalTerrainBlock(uint8 BlockID) const
+{
+	switch (static_cast<EBlockType>(BlockID))
+	{
+	case EBlockType::Grass:
+	case EBlockType::Dirt:
+	case EBlockType::Cobblestone:
+	case EBlockType::Stone:
+	case EBlockType::Sand:
+		return true;
+
+	default:
+		return false;
+	}
+}
+
+void AWorldGenerator::GetSurfaceMaterialWeights(int32 WorldX, int32 WorldY, float& OutGrass, float& OutSand, float& OutStone) const
+{
+	OutGrass = 1.0f;
+	OutSand = 0.0f;
+	OutStone = 0.0f;
+
+	if (!bEnableTopTextureBlending || BiomeBlendStrength <= 0.0f || BiomeBlendWidth <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	const float WX = static_cast<float>(WorldX);
+	const float WY = static_cast<float>(WorldY);
+
+	// Warp the sampling coordinates so the transition band meanders instead of following a clean contour.
+	const float WarpX = Noise.Fractal2D(WX, WY, 2, 0.045f, 0.5f, 2.0f) * BiomeBlendWarp;
+	const float WarpY = Noise.Fractal2D(WX + 7919.0f, WY + 104729.0f, 2, 0.045f, 0.5f, 2.0f) * BiomeBlendWarp;
+	const float SX = WX + WarpX;
+	const float SY = WY + WarpY;
+
+	// High-frequency jitter breaks the smooth threshold contour into interlocking lobes.
+	const float Jitter = Noise.Fractal2D(WX, WY, 3, 0.22f, 0.5f, 2.0f) * BiomeBlendNoise;
+
+	// Mirrors GetBiomeAt() fields, but sampled with the warp applied.
+	const float Temp = Noise.Fractal2D_01(SX, SY, 3, 0.006f) + Jitter;
+	const float Moisture = Noise.Fractal2D_01(SX + 5000.0f, SY + 5000.0f, 3, 0.006f) + Jitter;
+	const float Continental = Noise.Fractal2D(SX, SY, 3, 0.005f, 0.5f, 2.0f) + Jitter;
+
+	const float Band = BiomeBlendWidth;
+
+	// Same rules as GetBiomeAt(), but with smooth ramps instead of hard thresholds.
+	const float DesertTemp = FMath::SmoothStep(0.60f - Band, 0.60f + Band, Temp);
+	const float DesertDry = 1.0f - FMath::SmoothStep(0.40f - Band, 0.40f + Band, Moisture);
+	const float SandWeight = DesertTemp * DesertDry;
+	const float StoneWeight = FMath::SmoothStep(0.35f - Band, 0.35f + Band, Continental);
+
+	const float GrassWeight = FMath::Max(0.0f, 1.0f - SandWeight - StoneWeight);
+	const float WeightSum = GrassWeight + SandWeight + StoneWeight;
+	if (WeightSum <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	OutGrass = GrassWeight / WeightSum;
+	OutSand = SandWeight / WeightSum;
+	OutStone = StoneWeight / WeightSum;
+}
+
 bool AWorldGenerator::IsBlockTransparent(uint8 BlockID) const
 {
 	return TransparentBlockIDs.Contains(BlockID);

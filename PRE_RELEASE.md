@@ -32,6 +32,11 @@ This pre-release marks the completion of the core engine architecture: infinite 
   - Eliminates the repetitive 1-meter chessboard grid across landscapes by applying deterministic 4-way rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) to top/bottom faces of isotropic blocks (Grass Top, Dirt, Stone, Cobblestone, Sand, Ores).
   - Normal map tangents rotate in lockstep ($+X, +Y, -X, -Y$) so lighting and sun glare remain physically accurate.
   - Directional textures (Wood bark, planks, furnaces, crafting tables) remain upright.
+- **Stochastic Top-Face UV Dithering**: Each isotropic top face also receives a deterministic per-block UV phase offset derived from its world position, which breaks the remaining alignment grid without introducing seams (the array sampler's Wrap mode handles the out-of-range UVs).
+- **Smooth Biome Texture Cross-Fade**:
+  - A smooth Grass/Sand/Stone field (warped and jittered so borders interlock organically instead of forming clean contours) is sampled per face corner and packed into the mesh: `UV1.Y` = secondary slice, `VertexColor.B` = blend weight.
+  - `M_Global` adds `Base_Color_Blend` / `Normals_Blend` array samples routed through two `LinearInterpolate` nodes, so top faces lerp between neighbouring biome materials.
+  - The weight is capped at `0.5` so a block's own texture always stays dominant and transitions are symmetric; constructed blocks are untouched.
 - **Material Smoothing**:
   - Normal softening (`FlattenNormal`) softens harsh micro-crevices without losing 3D relief.
   - Terrain roughness re-mapping gives organic matter (grass, soil, rock) a soft matte finish instead of glazed plastic.
