@@ -250,7 +250,7 @@ Unified terrain shader sampling 32×32 texture arrays via `UV0` (face coordinate
 |---|---|---|
 | `UV0.XY` | – | Face UVs (0..1), rotated per block and phase-shifted on isotropic tops |
 | `UV1.X` | – | Primary `Texture2DArray` slice index |
-| `UV1.Y` | – | Secondary (neighbouring biome) slice index, top faces only |
+| `UV1.Y` | – | Secondary (neighbouring biome) slice index |
 | `VertexColor.R` | R | Slice index (legacy path, mirrors `UV1.X`) |
 | `VertexColor.G` | G | Tiling-breakup mask (`1` = natural terrain, `0` = constructed blocks) |
 | `VertexColor.B` | B | Biome blend weight `0..0.5`, interpolated per face corner |
@@ -267,12 +267,25 @@ Primary normal chain -----Lerp(A)--> LinearInterpolate_3 --> FlattenNormal.Norma
 Normals_Blend -----------Lerp(B)-->            ^ (Alpha = VertexColor.B)
 ```
 
-- Non-top faces write `UV1.Y = UV1.X` and `VertexColor.B = 0`, so the extra samples resolve to the primary slice and the lerp is a no-op.
+- Blocks outside the natural surface set (Grass / Dirt / Sand / Stone) write `UV1.Y = UV1.X` and `VertexColor.B = 0`, so the extra samples resolve to the primary slice and the lerp is a no-op.
 - The weight is capped at `0.5`, so a block's own texture always stays dominant and the transition is symmetric on both sides of a border.
-- Driven by `AWorldGenerator::GetSurfaceMaterialWeights()` (smooth Grass/Sand/Stone fields that mirror `GetBiomeAt()` thresholds and add a coordinate warp + high-frequency jitter) and sampled per face corner in `AChunkActor::GenerateMeshData()`.
+- All six faces blend, not just tops: the target material's texture is looked up per face, so cliffs and terrain steps fade vertically as well.
+- Driven by `AWorldGenerator::GetSurfaceMaterialWeightGrid()` (chunk-wide, field samples shared, one-cell apron) and sampled per face corner in `AChunkActor::GenerateMeshData()`.
+- **Surface-only.** The fade is gated to each column's top four blocks (`Z + 3 >= ColumnTopZ`), so cave walls, cliff faces and deep stone keep their own material instead of fading halfway toward grass.
+- **8-bit vertex colour is sRGB-decoded.** Both `CreateMeshSection_LinearColor` calls pass `bSRGBConversion = true`. The material's `VertexColor` node decodes the stored byte as sRGB; with the default (`false`) a linear `0.5` weight reaches the shader as `sRGBToLinear(0.5) ≈ 0.21`. That turns the whole fade into `pow(weight, 2.2)`: the border collapses into a hard step and only `1.0` reads as a full blend.
+
+**Alignment rule (important).** The 50% point of the fade is derived from the *signed distance to the exact thresholds* `GetBiomeAt()` uses (`Temp > 0.60`, `Moisture < 0.40`, `Continental > 0.35`), and both paths sample the same `SampleBiomeFields()`. The block ID flips exactly on those contours, so both sides of a border meet at `0.5` and the seam is continuous. Applying a warp/jitter to the fade fields *only* slides the fade off the flip line and reintroduces a hard edge — that was the original bug. A flat `0.75`-block plateau guarantees the shared corner between two differently-classified blocks lands on `0.5`.
+
+**Width in blocks.** The signed distance is divided by the local field gradient (central differences on the apron), giving `BlocksToBorder`, and the fade runs `SmoothStep(0.75, 0.75 + BiomeBlendWidth, BlocksToBorder)`. Measuring in blocks keeps the transition the same physical width everywhere; in field units it stretched to 30–40 blocks on flat ground and shrank to ~2 blocks on steep slopes.
+
+**Per-material membership.** Each field yields a 0..1 membership value: `0.5` exactly on the contour, `1` well inside the region and `0` well outside. The three material weights are then `Sand = S*(1-R)`, `Stone = R*(1-S)`, `Grass = (1-S)*(1-R)` (normalized). A fade must not cap the *dominant* material at 0.5 — doing so leaves the whole region as a permanent 50/50 wash and turns the fade's outer edge into the visible "line".
+
+**Organic shape.** `SampleBiomeFields()` warps the field coordinates by `BiomeBlendWarp` (two octaves) and adds `BiomeBlendNoise` field jitter. Because the hard biome lookup goes through the same sample, the *block-level* border meanders organically instead of following the raw noise contour.
+
+**Terrain height.** `GetTerrainHeight(..., DesertBlend)` ramps the desert flattening with `GetDesertBlendAt()` instead of switching on the discrete biome, so a desert no longer meets its neighbours with a cliff. That ramp is in field units (`BiomeHeightRamp`), since it shapes the terrain rather than the texture.
 
 #### Tiling-grid dithering
 
 `AChunkActor::bStochasticTopUVs` gives every isotropic top face a deterministic per-block UV phase offset (derived from the block's world position). The UVs are intentionally left outside `[0,1]` so the sampler's Wrap mode tiles them; applying `Frac` would collapse the quad onto a single texel.
 
-Tunables (`AWorldGenerator`): `BiomeBlendWidth` (band width), `BiomeBlendNoise` (border interlock), `BiomeBlendWarp` (large-scale meander), `BiomeBlendStrength` (0 disables).
+Tunables (`AWorldGenerator`): `BiomeBlendWidth` (fade half-width in **blocks**, default 4), `BiomeBlendNoise` (border interlock), `BiomeBlendWarp` (large-scale meander, blocks), `BiomeBlendStrength` (0 disables), `BiomeHeightRamp` (desert height-ramp half-width, field units).

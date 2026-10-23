@@ -134,19 +134,34 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending")
 	bool bEnableTopTextureBlending = true;
 
-	/** Width of the biome cross-fade band in biome-field units. Larger = wider, softer transitions. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "0.30"))
-	float BiomeBlendWidth = 0.06f;
-
-	/** High-frequency field jitter that makes biome borders interlock organically instead of forming clean lines */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "0.25"))
-	float BiomeBlendNoise = 0.035f;
-
-	/** Low-frequency world-space warp (in blocks) that pushes biome borders around */
+	/**
+	 * Half-width of the biome texture cross-fade, in BLOCKS. The fade distance is divided
+	 * by the local biome-field gradient, so the transition is the same physical width
+	 * everywhere instead of stretching to dozens of blocks where the fields are flat.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "32.0"))
-	float BiomeBlendWarp = 4.0f;
+	float BiomeBlendWidth = 4.0f;
 
-	/** Overall strength of the top-texture cross-fade (0 = disabled, 1 = full) */
+	/** Half-width of the terrain-height ramp across a desert border, in biome-field units. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "0.30"))
+	float BiomeHeightRamp = 0.06f;
+
+	/**
+	 * Field-space jitter added to the biome fields. Makes the border contour interlock in
+	 * lobes instead of reading as a clean line. Applied to the shared field sample, so the
+	 * hard block assignment and the smooth cross-fade always agree.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "0.25"))
+	float BiomeBlendNoise = 0.010f;
+
+	/**
+	 * World-space warp amplitude (in blocks) applied to the biome field coordinates.
+	 * Low-frequency, so borders meander instead of following the raw noise contour.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "32.0"))
+	float BiomeBlendWarp = 3.0f;
+
+	/** Overall strength of the biome cross-fade (0 = disabled, 1 = full) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering|Blending", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float BiomeBlendStrength = 1.0f;
 
@@ -157,6 +172,22 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
 	void GetSurfaceMaterialWeights(int32 WorldX, int32 WorldY, float& OutGrass, float& OutSand, float& OutStone) const;
+
+	/**
+	 * Fills a (SizeX+1) x (SizeY+1) grid of normalized surface-material weights for chunk
+	 * meshing. Field samples are shared across the whole grid and a one-cell apron is
+	 * included so the local gradient can be taken by central differences.
+	 */
+	void GetSurfaceMaterialWeightGrid(int32 BaseX, int32 BaseY, int32 SizeX, int32 SizeY,
+		TArray<float>& OutGrass, TArray<float>& OutSand, TArray<float>& OutStone) const;
+
+	/**
+	 * Smooth 0..1 desert factor for a world column: 0 outside the desert threshold,
+	 * 1 well inside it, and exactly 0.5 on the contour. Used to ramp the desert terrain
+	 * flattening across the border instead of stepping at it.
+	 */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
+	float GetDesertBlendAt(int32 WorldX, int32 WorldY) const;
 
 	/** Returns true if the block is visually transparent (e.g. Glass, Leaves, Water) */
 	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
@@ -332,7 +363,28 @@ private:
 	void UpdateNeighborChunkMeshes(const FChunkCoord& CenterCoord);
 
 	EBiomeType GetBiomeAt(int32 WorldX, int32 WorldY) const;
-	int32 GetTerrainHeight(int32 WorldX, int32 WorldY, EBiomeType Biome) const;
+
+	/**
+	 * Single source of truth for the biome classification fields. Both the hard biome
+	 * lookup and the smooth cross-fade sample through here, so a texture fade can never
+	 * drift away from the contour where the surface block actually flips.
+	 */
+	void SampleBiomeFields(int32 WorldX, int32 WorldY, float& OutContinental, float& OutTemp, float& OutMoisture) const;
+
+	/** Noise-modulated half-width of the cross-fade band, so the fade distance varies organically. */
+	float GetBiomeBlendBand(int32 WorldX, int32 WorldY) const;
+
+	/** Hard biome classification from already-sampled fields (mirrors the historical thresholds). */
+	EBiomeType ClassifyBiomeFields(float Continental, float Temp, float Moisture) const;
+
+	/** Smooth desert factor from already-sampled fields. */
+	float DesertBlendFromFields(int32 WorldX, int32 WorldY, float Temp, float Moisture) const;
+
+	/**
+	 * @param DesertBlend  Smooth desert factor from GetDesertBlendAt(); negative means
+	 *                     "derive a hard 0/1 value from Biome" (legacy behaviour).
+	 */
+	int32 GetTerrainHeight(int32 WorldX, int32 WorldY, EBiomeType Biome, float DesertBlend = -1.0f) const;
 	void GenerateTree(AChunkActor* Chunk, int32 LocalX, int32 LocalY, int32 SurfaceZ, EBiomeType Biome);
 	void GenerateVillageHouse(AChunkActor* Chunk, int32 CenterX, int32 CenterY, int32 SurfaceZ);
 

@@ -376,6 +376,10 @@ void AChunkActor::AddFace(
 	// R = slice index, G = tiling-breakup mask, B = biome blend weight, A = 1
 	// Top faces receive per-corner weights so the cross-fade interpolates across the quad
 	// instead of banding at block boundaries.
+	// The mesh sections are created with bSRGBConversion=true so the material's VertexColor
+	// node decodes this channel back to the same linear value. With the default (false) the
+	// 8-bit storage round-trip turns a 0.5 weight into ~0.21 in the shader, which collapses
+	// the cross-fade into a hard line exactly at the biome border.
 	const float VertexWeights[4] = {
 		static_cast<float>(CornerBlendWeights.X),
 		static_cast<float>(CornerBlendWeights.Y),
@@ -395,32 +399,49 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshD
 	OutNonSolidMeshData.Reset();
 
 	// Precompute smooth biome surface weights for this chunk plus a one-column border.
-	// Top-face corners sample this grid, so the cross-fade interpolates continuously from
-	// block to block instead of banding on the voxel grid.
+	// Face corners sample this grid, so the cross-fade interpolates continuously from
+	// block to block instead of banding on the voxel grid. The generator computes the
+	// whole grid at once so the expensive field samples are shared.
 	constexpr int32 GridStride = CHUNK_SIZE_X + 1;
-	constexpr int32 GridSize = (CHUNK_SIZE_Y + 1) * GridStride;
 	const bool bUseSurfaceBlending = bEnableTopTextureBlending && WorldGenerator.IsValid();
 
-	float GrassWeights[GridSize];
-	float SandWeights[GridSize];
-	float StoneWeights[GridSize];
+	TArray<float> GrassWeights;
+	TArray<float> SandWeights;
+	TArray<float> StoneWeights;
 
 	if (bUseSurfaceBlending)
 	{
-		const int32 BaseWorldX = ChunkCoord.X * CHUNK_SIZE_X;
-		const int32 BaseWorldY = ChunkCoord.Y * CHUNK_SIZE_Y;
+		WorldGenerator->GetSurfaceMaterialWeightGrid(
+			ChunkCoord.X * CHUNK_SIZE_X,
+			ChunkCoord.Y * CHUNK_SIZE_Y,
+			CHUNK_SIZE_X,
+			CHUNK_SIZE_Y,
+			GrassWeights,
+			SandWeights,
+			StoneWeights);
+	}
 
-		for (int32 GY = 0; GY <= CHUNK_SIZE_Y; ++GY)
+	// Highest solid block per column. The biome cross-fade is a surface effect, so the
+	// mesh keeps cave walls, cliff faces and deep stone out of it — otherwise a block of
+	// stone forty layers down would fade halfway toward grass.
+	TArray<int32> ColumnTopZ;
+	if (bUseSurfaceBlending)
+	{
+		ColumnTopZ.SetNumUninitialized(CHUNK_SIZE_X * CHUNK_SIZE_Y);
+		for (int32 CY = 0; CY < CHUNK_SIZE_Y; ++CY)
 		{
-			for (int32 GX = 0; GX <= CHUNK_SIZE_X; ++GX)
+			for (int32 CX = 0; CX < CHUNK_SIZE_X; ++CX)
 			{
-				const int32 GridIndex = (GY * GridStride) + GX;
-				WorldGenerator->GetSurfaceMaterialWeights(
-					BaseWorldX + GX,
-					BaseWorldY + GY,
-					GrassWeights[GridIndex],
-					SandWeights[GridIndex],
-					StoneWeights[GridIndex]);
+				int32 TopZ = 0;
+				for (int32 CZ = ChunkHeight - 1; CZ >= 0; --CZ)
+				{
+					if (BlockData[GetBlockIndex(CX, CY, CZ)] != 0)
+					{
+						TopZ = CZ;
+						break;
+					}
+				}
+				ColumnTopZ[CY * CHUNK_SIZE_X + CX] = TopZ;
 			}
 		}
 	}
@@ -478,24 +499,38 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshD
 					continue;
 				}
 
-				// Standard Cube Faces:
-				// Top (+Z)
-				if (ShouldRenderFace(BlockID, X, Y, Z + 1))
+				// --- Biome cross-fade -------------------------------------------------
+				// Decide once per block which neighbouring surface material it should fade
+				// toward, then reuse the per-corner weights for every face. Sides blend too,
+				// so the fade does not stop at the edge of the top face on cliffs and steps.
+				uint8 BlendTargetBlockID = 0;
+				FVector4 CornerWeights(0.0f, 0.0f, 0.0f, 0.0f);
+
+				if (bUseSurfaceBlending && Z + 3 >= ColumnTopZ[Y * CHUNK_SIZE_X + X])
 				{
-					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::Top) : 0;
-
-					int32 SecondaryTex = Tex;
-					FVector4 CornerWeights(0.0, 0.0, 0.0, 0.0);
-
-					if (bUseSurfaceBlending)
+					// Which of the three natural surface materials does this block belong to?
+					int32 OwnIndex = -1;
+					switch (static_cast<EBlockType>(BlockID))
 					{
-						const int32 GrassTex = WorldGenerator->GetTextureForBlock(static_cast<uint8>(EBlockType::Grass), EBlockFace::Top);
-						const int32 SandTex = WorldGenerator->GetTextureForBlock(static_cast<uint8>(EBlockType::Sand), EBlockFace::Top);
-						const int32 StoneTex = WorldGenerator->GetTextureForBlock(static_cast<uint8>(EBlockType::Stone), EBlockFace::Top);
+					case EBlockType::Grass:
+					case EBlockType::Dirt:
+						OwnIndex = 0;
+						break;
+					case EBlockType::Sand:
+						OwnIndex = 1;
+						break;
+					case EBlockType::Stone:
+						OwnIndex = 2;
+						break;
+					default:
+						break;
+					}
 
+					if (OwnIndex >= 0)
+					{
 						// Rock only becomes a surface material above 65% of the world height (see
-						// AWorldGenerator::GenerateChunk), so gate the stone field by altitude to
-						// avoid tinting low-altitude grass hills with rock.
+						// AWorldGenerator::GenerateChunkData), so gate the stone field by altitude
+						// to avoid tinting low-altitude grass hills with rock.
 						const float StoneMinZ = static_cast<float>(ChunkHeight) * 0.65f;
 						const float StoneAltitude = FMath::SmoothStep(StoneMinZ - 6.0f, StoneMinZ + 6.0f, static_cast<float>(Z));
 
@@ -517,32 +552,28 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshD
 							}
 						};
 
-						float OwnGrass = 1.0f;
-						float OwnSand = 0.0f;
-						float OwnStone = 0.0f;
-						WeightsAt(X, Y, OwnGrass, OwnSand, OwnStone);
+						float OwnWeights[3] = { 0.0f, 0.0f, 0.0f };
+						WeightsAt(X, Y, OwnWeights[0], OwnWeights[1], OwnWeights[2]);
 
-						// Pick the strongest *other* natural surface material as the cross-fade target.
+						// Strongest *other* material is the cross-fade target.
 						int32 TargetIndex = -1;
-						if (Tex == GrassTex)
+						float BestWeight = 0.0f;
+						for (int32 Index = 0; Index < 3; ++Index)
 						{
-							TargetIndex = (OwnSand >= OwnStone) ? 1 : 2;
-						}
-						else if (Tex == SandTex)
-						{
-							TargetIndex = (OwnGrass >= OwnStone) ? 0 : 2;
-						}
-						else if (Tex == StoneTex)
-						{
-							TargetIndex = (OwnGrass >= OwnSand) ? 0 : 1;
+							if (Index != OwnIndex && OwnWeights[Index] > BestWeight)
+							{
+								BestWeight = OwnWeights[Index];
+								TargetIndex = Index;
+							}
 						}
 
-						const int32 SurfaceTextures[3] = { GrassTex, SandTex, StoneTex };
-						const int32 TargetTex = (TargetIndex >= 0) ? SurfaceTextures[TargetIndex] : Tex;
-
-						if (TargetIndex >= 0 && TargetTex != Tex)
+						if (TargetIndex >= 0 && BestWeight > 0.002f)
 						{
-							const float Strength = FMath::Clamp(WorldGenerator->BiomeBlendStrength, 0.0f, 1.0f);
+							static const EBlockType SurfaceBlocks[3] = { EBlockType::Grass, EBlockType::Sand, EBlockType::Stone };
+							BlendTargetBlockID = static_cast<uint8>(SurfaceBlocks[TargetIndex]);
+
+							// BiomeBlendStrength is already folded into the weights by
+							// GetSurfaceMaterialWeights(), so it is not applied again here.
 							auto WeightAt = [&](int32 CX, int32 CY) -> float
 							{
 								float Grass = 0.0f;
@@ -550,14 +581,12 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshD
 								float Stone = 0.0f;
 								WeightsAt(CX, CY, Grass, Sand, Stone);
 
-								const float Target = (TargetIndex == 0) ? Grass : ((TargetIndex == 1) ? Sand : Stone);
-
+								const float Column[3] = { Grass, Sand, Stone };
 								// Cap at 0.5 so the block's own texture always stays dominant and the
 								// transition is symmetric on both sides of a biome border.
-								return FMath::Clamp(Target * Strength, 0.0f, 0.5f);
+								return FMath::Clamp(Column[TargetIndex], 0.0f, 0.5f);
 							};
 
-							SecondaryTex = TargetTex;
 							CornerWeights = FVector4(
 								WeightAt(X, Y),
 								WeightAt(X + 1, Y),
@@ -565,43 +594,65 @@ void AChunkActor::GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshD
 								WeightAt(X, Y + 1));
 						}
 					}
+				}
 
-					AddFace(TargetMeshData, BlockPos, EBlockFace::Top, BlockID, Tex, SecondaryTex, CornerWeights);
+				// Secondary texture for a face: same face of the cross-fade target block.
+				auto BlendTexFor = [&](EBlockFace Face) -> int32
+				{
+					if (BlendTargetBlockID != 0 && WorldGenerator.IsValid())
+					{
+						return WorldGenerator->GetTextureForBlock(BlendTargetBlockID, Face);
+					}
+					return -1;
+				};
+
+				// Standard Cube Faces:
+				// Top (+Z)
+				if (ShouldRenderFace(BlockID, X, Y, Z + 1))
+				{
+					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::Top) : 0;
+					const int32 BlendTex = BlendTexFor(EBlockFace::Top);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::Top, BlockID, Tex, (BlendTex >= 0) ? BlendTex : Tex, CornerWeights);
 				}
 
 				// Bottom (-Z)
 				if (ShouldRenderFace(BlockID, X, Y, Z - 1))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, EBlockFace::Bottom) : 0;
-					AddFace(TargetMeshData, BlockPos, EBlockFace::Bottom, BlockID, Tex);
+					const int32 BlendTex = BlendTexFor(EBlockFace::Bottom);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::Bottom, BlockID, Tex, (BlendTex >= 0) ? BlendTex : Tex, CornerWeights);
 				}
 
 				// North (+X)
 				if (ShouldRenderFace(BlockID, X + 1, Y, Z))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, GetLocalFace(EBlockFace::North, Meta)) : 0;
-					AddFace(TargetMeshData, BlockPos, EBlockFace::North, BlockID, Tex);
+					const int32 BlendTex = BlendTexFor(EBlockFace::North);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::North, BlockID, Tex, (BlendTex >= 0) ? BlendTex : Tex, CornerWeights);
 				}
 
 				// South (-X)
 				if (ShouldRenderFace(BlockID, X - 1, Y, Z))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, GetLocalFace(EBlockFace::South, Meta)) : 0;
-					AddFace(TargetMeshData, BlockPos, EBlockFace::South, BlockID, Tex);
+					const int32 BlendTex = BlendTexFor(EBlockFace::South);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::South, BlockID, Tex, (BlendTex >= 0) ? BlendTex : Tex, CornerWeights);
 				}
 
 				// East (+Y)
 				if (ShouldRenderFace(BlockID, X, Y + 1, Z))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, GetLocalFace(EBlockFace::East, Meta)) : 0;
-					AddFace(TargetMeshData, BlockPos, EBlockFace::East, BlockID, Tex);
+					const int32 BlendTex = BlendTexFor(EBlockFace::East);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::East, BlockID, Tex, (BlendTex >= 0) ? BlendTex : Tex, CornerWeights);
 				}
 
 				// West (-Y)
 				if (ShouldRenderFace(BlockID, X, Y - 1, Z))
 				{
 					const int32 Tex = WorldGenerator.IsValid() ? WorldGenerator->GetTextureForBlock(BlockID, GetLocalFace(EBlockFace::West, Meta)) : 0;
-					AddFace(TargetMeshData, BlockPos, EBlockFace::West, BlockID, Tex);
+					const int32 BlendTex = BlendTexFor(EBlockFace::West);
+					AddFace(TargetMeshData, BlockPos, EBlockFace::West, BlockID, Tex, (BlendTex >= 0) ? BlendTex : Tex, CornerWeights);
 				}
 			}
 		}
@@ -773,7 +824,8 @@ void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FCh
 			TArray<FVector2D>(),
 			InSolidMeshData.VertexColors,
 			InSolidMeshData.Tangents,
-			true // Generate collision for solid blocks
+			true, // Generate collision for solid blocks
+			true  // sRGB conversion: the material decodes vertex color, keep weights linear
 		);
 
 		UMaterialInterface* SolidMat = (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
@@ -801,7 +853,8 @@ void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FCh
 			TArray<FVector2D>(),
 			InNonSolidMeshData.VertexColors,
 			InNonSolidMeshData.Tangents,
-			true // Generate collision for trace queries
+			true, // Generate collision for trace queries
+			true  // sRGB conversion: the material decodes vertex color, keep weights linear
 		);
 
 		UMaterialInterface* NonSolidMat = (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)

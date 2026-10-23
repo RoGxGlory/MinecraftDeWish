@@ -377,52 +377,122 @@ bool AWorldGenerator::IsNaturalTerrainBlock(uint8 BlockID) const
 	}
 }
 
-void AWorldGenerator::GetSurfaceMaterialWeights(int32 WorldX, int32 WorldY, float& OutGrass, float& OutSand, float& OutStone) const
+void AWorldGenerator::GetSurfaceMaterialWeightGrid(int32 BaseX, int32 BaseY, int32 SizeX, int32 SizeY,
+	TArray<float>& OutGrass, TArray<float>& OutSand, TArray<float>& OutStone) const
 {
-	OutGrass = 1.0f;
-	OutSand = 0.0f;
-	OutStone = 0.0f;
+	const int32 Stride = SizeX + 1;
+	const int32 Count = (SizeY + 1) * Stride;
+
+	OutGrass.SetNumUninitialized(Count);
+	OutSand.SetNumUninitialized(Count);
+	OutStone.SetNumUninitialized(Count);
+
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		OutGrass[Index] = 1.0f;
+		OutSand[Index] = 0.0f;
+		OutStone[Index] = 0.0f;
+	}
 
 	if (!bEnableTopTextureBlending || BiomeBlendStrength <= 0.0f || BiomeBlendWidth <= KINDA_SMALL_NUMBER)
 	{
 		return;
 	}
 
-	const float WX = static_cast<float>(WorldX);
-	const float WY = static_cast<float>(WorldY);
+	// Sample the biome fields once per grid point (plus a one-cell apron) and keep the
+	// signed distances to the thresholds GetBiomeAt() classifies the surface block with.
+	// The block ID flips exactly on those contours, so the 50% point of the cross-fade has
+	// to sit on them too - otherwise the two sides of a border end up at different weights
+	// and the seam reads as a hard line.
+	const int32 FieldStride = SizeX + 3;
+	TArray<float> DesertDist;
+	TArray<float> StoneDist;
+	DesertDist.SetNumUninitialized((SizeY + 3) * FieldStride);
+	StoneDist.SetNumUninitialized((SizeY + 3) * FieldStride);
 
-	// Warp the sampling coordinates so the transition band meanders instead of following a clean contour.
-	const float WarpX = Noise.Fractal2D(WX, WY, 2, 0.045f, 0.5f, 2.0f) * BiomeBlendWarp;
-	const float WarpY = Noise.Fractal2D(WX + 7919.0f, WY + 104729.0f, 2, 0.045f, 0.5f, 2.0f) * BiomeBlendWarp;
-	const float SX = WX + WarpX;
-	const float SY = WY + WarpY;
-
-	// High-frequency jitter breaks the smooth threshold contour into interlocking lobes.
-	const float Jitter = Noise.Fractal2D(WX, WY, 3, 0.22f, 0.5f, 2.0f) * BiomeBlendNoise;
-
-	// Mirrors GetBiomeAt() fields, but sampled with the warp applied.
-	const float Temp = Noise.Fractal2D_01(SX, SY, 3, 0.006f) + Jitter;
-	const float Moisture = Noise.Fractal2D_01(SX + 5000.0f, SY + 5000.0f, 3, 0.006f) + Jitter;
-	const float Continental = Noise.Fractal2D(SX, SY, 3, 0.005f, 0.5f, 2.0f) + Jitter;
-
-	const float Band = BiomeBlendWidth;
-
-	// Same rules as GetBiomeAt(), but with smooth ramps instead of hard thresholds.
-	const float DesertTemp = FMath::SmoothStep(0.60f - Band, 0.60f + Band, Temp);
-	const float DesertDry = 1.0f - FMath::SmoothStep(0.40f - Band, 0.40f + Band, Moisture);
-	const float SandWeight = DesertTemp * DesertDry;
-	const float StoneWeight = FMath::SmoothStep(0.35f - Band, 0.35f + Band, Continental);
-
-	const float GrassWeight = FMath::Max(0.0f, 1.0f - SandWeight - StoneWeight);
-	const float WeightSum = GrassWeight + SandWeight + StoneWeight;
-	if (WeightSum <= KINDA_SMALL_NUMBER)
+	for (int32 Y = -1; Y <= SizeY + 1; ++Y)
 	{
-		return;
+		for (int32 X = -1; X <= SizeX + 1; ++X)
+		{
+			float Continental = 0.0f;
+			float Temp = 0.0f;
+			float Moisture = 0.0f;
+			SampleBiomeFields(BaseX + X, BaseY + Y, Continental, Temp, Moisture);
+
+			const int32 Index = (Y + 1) * FieldStride + (X + 1);
+			DesertDist[Index] = FMath::Min(Temp - 0.60f, 0.40f - Moisture);
+			StoneDist[Index] = Continental - 0.35f;
+		}
 	}
 
-	OutGrass = GrassWeight / WeightSum;
-	OutSand = SandWeight / WeightSum;
-	OutStone = StoneWeight / WeightSum;
+	// Width in blocks, so the fade does not stretch to dozens of blocks where the fields
+	// happen to be flat. The plateau keeps the shared corner between two differently
+	// classified blocks pinned at exactly 0.5 on both sides.
+	const float WidthBlocks = FMath::Max(BiomeBlendWidth * BiomeBlendStrength, 0.01f);
+	const float PlateauBlocks = 0.75f;
+
+	// Smooth 0..1 membership of a field's region: exactly 0.5 on the contour, 1 well
+	// inside it, 0 well outside. Both sides of a border meet at 0.5, while deep inside a
+	// biome the material reaches a full 1.0 instead of stalling at 0.5 (which used to
+	// leave the whole desert as a permanent 50/50 grass/sand wash).
+	auto EvalBlend = [&](const TArray<float>& Field, int32 GX, int32 GY) -> float
+	{
+		const int32 Index = (GY + 1) * FieldStride + (GX + 1);
+		const float Distance = Field[Index];
+
+		// Central differences give the perpendicular distance in blocks.
+		const float GradX = 0.5f * (Field[Index + 1] - Field[Index - 1]);
+		const float GradY = 0.5f * (Field[Index + FieldStride] - Field[Index - FieldStride]);
+		const float Gradient = FMath::Max(FMath::Sqrt(GradX * GradX + GradY * GradY), 1.0e-5f);
+		const float BlocksToBorder = FMath::Abs(Distance) / Gradient;
+
+		const float T = FMath::SmoothStep(PlateauBlocks, PlateauBlocks + WidthBlocks, BlocksToBorder);
+		return (Distance >= 0.0f) ? (0.5f + 0.5f * T) : (0.5f - 0.5f * T);
+	};
+
+	for (int32 GY = 0; GY <= SizeY; ++GY)
+	{
+		for (int32 GX = 0; GX <= SizeX; ++GX)
+		{
+			const int32 Index = GY * Stride + GX;
+
+			const float Sand = EvalBlend(DesertDist, GX, GY);
+			const float Stone = EvalBlend(StoneDist, GX, GY);
+
+			// Sand dominates the desert, stone the mountains, grass everywhere else. Each
+			// factor is 0.5 on its own contour, so whichever pair straddles a border
+			// normalizes to exactly 0.5/0.5 there.
+			const float SandWeight = Sand * (1.0f - Stone);
+			const float StoneWeight = Stone * (1.0f - Sand);
+			const float GrassWeight = (1.0f - Sand) * (1.0f - Stone);
+
+			const float WeightSum = SandWeight + StoneWeight + GrassWeight;
+			if (WeightSum <= KINDA_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			const float Inv = 1.0f / WeightSum;
+			OutGrass[Index] = GrassWeight * Inv;
+			OutSand[Index] = SandWeight * Inv;
+			OutStone[Index] = StoneWeight * Inv;
+		}
+	}
+}
+
+void AWorldGenerator::GetSurfaceMaterialWeights(int32 WorldX, int32 WorldY, float& OutGrass, float& OutSand, float& OutStone) const
+{
+	// Single-point query (Blueprint / diagnostics): evaluate a 2x2 grid offset so the
+	// requested column lands on a real grid point with a full gradient apron.
+	TArray<float> Grass;
+	TArray<float> Sand;
+	TArray<float> Stone;
+	GetSurfaceMaterialWeightGrid(WorldX - 1, WorldY - 1, 1, 1, Grass, Sand, Stone);
+
+	const int32 Index = 1 * 2 + 1;
+	OutGrass = Grass[Index];
+	OutSand = Sand[Index];
+	OutStone = Stone[Index];
 }
 
 bool AWorldGenerator::IsBlockTransparent(uint8 BlockID) const
@@ -631,23 +701,56 @@ void AWorldGenerator::UpdateNeighborChunkMeshes(const FChunkCoord& CenterCoord)
 int32 AWorldGenerator::GetPredictedTerrainHeight(int32 WorldX, int32 WorldY) const
 {
 	const EBiomeType Biome = GetBiomeAt(WorldX, WorldY);
-	return GetTerrainHeight(WorldX, WorldY, Biome);
+	return GetTerrainHeight(WorldX, WorldY, Biome, GetDesertBlendAt(WorldX, WorldY));
 }
 
-EBiomeType AWorldGenerator::GetBiomeAt(int32 WorldX, int32 WorldY) const
+void AWorldGenerator::SampleBiomeFields(int32 WorldX, int32 WorldY, float& OutContinental, float& OutTemp, float& OutMoisture) const
 {
 	const float WX = static_cast<float>(WorldX);
 	const float WY = static_cast<float>(WorldY);
 
-	const float Continental = Noise.Fractal2D(WX, WY, 3, 0.005f, 0.5f, 2.0f);
+	// Organic border warp. Two octaves give both a broad meander and a fine ragged edge;
+	// both are cheap enough to run per generated column and keep the border from reading
+	// as a clean curve.
+	float SX = WX;
+	float SY = WY;
+	if (BiomeBlendWarp > 0.0f)
+	{
+		SX += Noise.Fractal2D(WX, WY, 2, 0.018f, 0.5f, 2.0f) * BiomeBlendWarp;
+		SY += Noise.Fractal2D(WX + 7919.0f, WY + 104729.0f, 2, 0.018f, 0.5f, 2.0f) * BiomeBlendWarp;
+	}
+
+	OutContinental = Noise.Fractal2D(SX, SY, 3, 0.005f, 0.5f, 2.0f);
+	OutTemp = Noise.Fractal2D_01(SX, SY, 3, 0.006f);
+	OutMoisture = Noise.Fractal2D_01(SX + 5000.0f, SY + 5000.0f, 3, 0.006f);
+
+	// Field-space jitter: interlocking lobes along the border. Applied to the shared sample,
+	// so block assignment and cross-fade stay on the same contour.
+	if (BiomeBlendNoise > 0.0f)
+	{
+		const float Jitter = Noise.Fractal2D(WX, WY, 2, 0.055f, 0.5f, 2.0f) * BiomeBlendNoise;
+		OutTemp += Jitter;
+		OutMoisture -= Jitter;
+	}
+}
+
+float AWorldGenerator::GetBiomeBlendBand(int32 WorldX, int32 WorldY) const
+{
+	// Vary the fade distance along the border so the gradient is not a uniform ribbon.
+	// This band is in field units and only drives the terrain-height ramp; the texture
+	// fade width is expressed in blocks (BiomeBlendWidth) inside the weight grid.
+	const float WX = static_cast<float>(WorldX);
+	const float WY = static_cast<float>(WorldY);
+	const float Variation = Noise.Fractal2D_01(WX + 1301.0f, WY + 7919.0f, 2, 0.035f);
+	return FMath::Max(BiomeHeightRamp * FMath::Lerp(0.55f, 1.85f, Variation), 0.001f);
+}
+
+EBiomeType AWorldGenerator::ClassifyBiomeFields(float Continental, float Temp, float Moisture) const
+{
 	if (Continental > 0.35f)
 	{
 		return EBiomeType::Mountains;
 	}
-
-	const float Temp = Noise.Fractal2D_01(WX, WY, 3, 0.006f);
-	const float Moisture = Noise.Fractal2D_01(WX + 5000.0f, WY + 5000.0f, 3, 0.006f);
-
 	if (Temp > 0.60f && Moisture < 0.40f)
 	{
 		return EBiomeType::Desert;
@@ -663,7 +766,38 @@ EBiomeType AWorldGenerator::GetBiomeAt(int32 WorldX, int32 WorldY) const
 	return EBiomeType::Plains;
 }
 
-int32 AWorldGenerator::GetTerrainHeight(int32 WorldX, int32 WorldY, EBiomeType Biome) const
+float AWorldGenerator::DesertBlendFromFields(int32 WorldX, int32 WorldY, float Temp, float Moisture) const
+{
+	// Signed distance to the exact condition ClassifyBiomeFields() uses for Desert:
+	// positive inside, negative outside, zero on the contour.
+	const float DesertDist = FMath::Min(Temp - 0.60f, 0.40f - Moisture);
+	const float Band = GetBiomeBlendBand(WorldX, WorldY);
+
+	// 0.5 on the contour, easing to 1 (inside) / 0 (outside) away from it. Identical on
+	// both sides of the border, so the terrain height ramps instead of stepping.
+	const float T = FMath::SmoothStep(0.0f, Band, FMath::Abs(DesertDist));
+	return (DesertDist >= 0.0f) ? (0.5f + 0.5f * T) : (0.5f - 0.5f * T);
+}
+
+EBiomeType AWorldGenerator::GetBiomeAt(int32 WorldX, int32 WorldY) const
+{
+	float Continental = 0.0f;
+	float Temp = 0.0f;
+	float Moisture = 0.0f;
+	SampleBiomeFields(WorldX, WorldY, Continental, Temp, Moisture);
+	return ClassifyBiomeFields(Continental, Temp, Moisture);
+}
+
+float AWorldGenerator::GetDesertBlendAt(int32 WorldX, int32 WorldY) const
+{
+	float Continental = 0.0f;
+	float Temp = 0.0f;
+	float Moisture = 0.0f;
+	SampleBiomeFields(WorldX, WorldY, Continental, Temp, Moisture);
+	return DesertBlendFromFields(WorldX, WorldY, Temp, Moisture);
+}
+
+int32 AWorldGenerator::GetTerrainHeight(int32 WorldX, int32 WorldY, EBiomeType Biome, float DesertBlend) const
 {
 	const float WX = static_cast<float>(WorldX);
 	const float WY = static_cast<float>(WorldY);
@@ -687,10 +821,15 @@ int32 AWorldGenerator::GetTerrainHeight(int32 WorldX, int32 WorldY, EBiomeType B
 		Height += MountainRise;
 	}
 
-	if (Biome == EBiomeType::Desert)
+	// Desert flattening, ramped by the smooth desert factor instead of switching on the
+	// discrete biome. A hard switch here produced a cliff wherever a desert met another
+	// biome, which is what read as a "line" along the border.
+	const float DesertT = (DesertBlend >= 0.0f)
+		? FMath::Clamp(DesertBlend, 0.0f, 1.0f)
+		: ((Biome == EBiomeType::Desert) ? 1.0f : 0.0f);
+	if (DesertT > 0.0f)
 	{
-		// Gently flatten desert dunes
-		Height = FMath::Lerp(Height, BaseHeight + (Continental * 4.0f), 0.5f);
+		Height = FMath::Lerp(Height, BaseHeight + (Continental * 4.0f), 0.5f * DesertT);
 	}
 
 	return FMath::Clamp(FMath::RoundToInt(Height), 4, ChunkHeight - 8);
@@ -710,6 +849,10 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 {
 	const FChunkCoord Coord = Chunk->ChunkCoord;
 
+	// Per-column results, cached so the flora pass below does not resample the biome fields.
+	EBiomeType ColumnBiome[CHUNK_SIZE_X][CHUNK_SIZE_Y];
+	int32 ColumnHeight[CHUNK_SIZE_X][CHUNK_SIZE_Y];
+
 	for (int32 X = 0; X < CHUNK_SIZE_X; ++X)
 	{
 		for (int32 Y = 0; Y < CHUNK_SIZE_Y; ++Y)
@@ -717,8 +860,19 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 			const int32 WorldX = (Coord.X * CHUNK_SIZE_X) + X;
 			const int32 WorldY = (Coord.Y * CHUNK_SIZE_Y) + Y;
 
-			const EBiomeType Biome = GetBiomeAt(WorldX, WorldY);
-			const int32 TerrainHeight = GetTerrainHeight(WorldX, WorldY, Biome);
+			// Sample the shared fields once, then derive both the discrete biome and the
+			// smooth desert factor from them so the two can never disagree.
+			float Continental = 0.0f;
+			float Temp = 0.0f;
+			float Moisture = 0.0f;
+			SampleBiomeFields(WorldX, WorldY, Continental, Temp, Moisture);
+
+			const EBiomeType Biome = ClassifyBiomeFields(Continental, Temp, Moisture);
+			const float DesertBlend = DesertBlendFromFields(WorldX, WorldY, Temp, Moisture);
+			const int32 TerrainHeight = GetTerrainHeight(WorldX, WorldY, Biome, DesertBlend);
+
+			ColumnBiome[X][Y] = Biome;
+			ColumnHeight[X][Y] = TerrainHeight;
 
 			for (int32 Z = 0; Z < ChunkHeight; ++Z)
 			{
@@ -868,8 +1022,8 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 				const int32 WorldX = (Coord.X * CHUNK_SIZE_X) + X;
 				const int32 WorldY = (Coord.Y * CHUNK_SIZE_Y) + Y;
 
-				const EBiomeType Biome = GetBiomeAt(WorldX, WorldY);
-				const int32 TerrainHeight = GetTerrainHeight(WorldX, WorldY, Biome);
+				const EBiomeType Biome = ColumnBiome[X][Y];
+				const int32 TerrainHeight = ColumnHeight[X][Y];
 
 				uint32 THash = (static_cast<uint32>(WorldX) * 374761393u) ^ (static_cast<uint32>(WorldY) * 668265263u) ^ static_cast<uint32>(WorldSeed);
 				THash = (THash ^ (THash >> 13)) * 1274126177u;
@@ -908,7 +1062,7 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 		const uint32 VHash = (static_cast<uint32>(Coord.X * 198491317) ^ static_cast<uint32>(Coord.Y * 6542989) ^ static_cast<uint32>(WorldSeed));
 		if ((VHash % 7) == 0)
 		{
-			const int32 CenterSurfaceZ = GetTerrainHeight(CenterWorldX, CenterWorldY, CenterBiome);
+			const int32 CenterSurfaceZ = GetTerrainHeight(CenterWorldX, CenterWorldY, CenterBiome, GetDesertBlendAt(CenterWorldX, CenterWorldY));
 			if (CenterSurfaceZ + 8 < ChunkHeight)
 			{
 				GenerateVillageHouse(Chunk, 8, 8, CenterSurfaceZ);

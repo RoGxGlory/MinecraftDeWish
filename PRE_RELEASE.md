@@ -34,9 +34,15 @@ This pre-release marks the completion of the core engine architecture: infinite 
   - Directional textures (Wood bark, planks, furnaces, crafting tables) remain upright.
 - **Stochastic Top-Face UV Dithering**: Each isotropic top face also receives a deterministic per-block UV phase offset derived from its world position, which breaks the remaining alignment grid without introducing seams (the array sampler's Wrap mode handles the out-of-range UVs).
 - **Smooth Biome Texture Cross-Fade**:
-  - A smooth Grass/Sand/Stone field (warped and jittered so borders interlock organically instead of forming clean contours) is sampled per face corner and packed into the mesh: `UV1.Y` = secondary slice, `VertexColor.B` = blend weight.
-  - `M_Global` adds `Base_Color_Blend` / `Normals_Blend` array samples routed through two `LinearInterpolate` nodes, so top faces lerp between neighbouring biome materials.
+  - A smooth Grass/Sand/Stone field is sampled per face corner and packed into the mesh: `UV1.Y` = secondary slice, `VertexColor.B` = blend weight.
+  - `M_Global` adds `Base_Color_Blend` / `Normals_Blend` array samples routed through two `LinearInterpolate` nodes, so faces lerp between neighbouring biome materials.
+  - The 50% point of the fade is derived from the signed distance to the exact thresholds the block assignment uses, so both sides of a border meet at `0.5` and the seam is continuous rather than a hard line.
+  - The biome border contour itself is warped and jittered (`SampleBiomeFields`), so borders interlock in organic lobes instead of following a clean curve.
+  - All six faces blend, not just tops, so cliffs and terrain steps fade vertically too.
   - The weight is capped at `0.5` so a block's own texture always stays dominant and transitions are symmetric; constructed blocks are untouched.
+  - The weight reaches the shader intact: the procedural mesh sections use sRGB vertex-colour conversion, so the material's vertex-colour decode does not crush a `0.5` weight to `0.21` (which used to collapse the fade into a hard line at the border).
+  - The fade only applies to the top four blocks of each column, so cave walls and deep stone are not tinted toward grass.
+  - Desert terrain flattening now ramps across the border with the smooth desert factor instead of switching on the discrete biome, removing the cliff that used to form where a desert met another biome.
 - **Material Smoothing**:
   - Normal softening (`FlattenNormal`) softens harsh micro-crevices without losing 3D relief.
   - Terrain roughness re-mapping gives organic matter (grass, soil, rock) a soft matte finish instead of glazed plastic.
