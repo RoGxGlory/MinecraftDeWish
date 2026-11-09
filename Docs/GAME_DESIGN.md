@@ -1,5 +1,18 @@
 # Game Design Document — MinecraftDeWish
 
+> **⚠ OBSOLETE — DO NOT USE AS DESIGN REFERENCE (audit 2026-11-09).**
+> This document describes the v0.1 **sandbox-only** build. It predates biomes, the
+> atmosphere pass, physical block debris, block rotation and, most importantly, the
+> game's actual premise: a **post-apocalyptic Minecraft-like horror survival** game
+> built around the Weeping Angels.
+>
+> It also does not match the code in several places (controls, collision classes,
+> item drops). See the audit in `production/audits/2026-11-09-docs-audit.md`.
+>
+> The replacement lives in `design/gdd/game-concept.md` and `design/gdd/<system>.md`.
+> Until that exists, treat this file as a **historical mechanics inventory**, not as
+> the game's design.
+
 ---
 
 ## 1. Core Philosophy & Player Loop

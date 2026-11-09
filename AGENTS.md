@@ -12,7 +12,7 @@ language. Code, identifiers, commit messages, and design docs stay in English.
 - **Engine:** Unreal Engine 5.8 (`EngineAssociation` in `MinecraftDeWish.uproject`)
 - **Language:** C++ (primary), Blueprint (content, prototyping, designer-facing tuning)
 - **Module:** `MinecraftDeWish` (Runtime) — `Source/MinecraftDeWish/{Public,Private}`
-- **Plugins enabled:** `ModelingToolsEditorMode`, `GameplayStateTree`, `ChaosVehiclesPlugin`
+- **Plugins enabled:** `ModelingToolsEditorMode`, `GameplayStateTree`
 - **Physics:** Chaos
 - **VCS:** Git, trunk-based development
 

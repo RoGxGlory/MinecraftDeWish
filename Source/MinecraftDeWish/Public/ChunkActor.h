@@ -95,7 +95,16 @@ public:
 	}
 
 	uint8 GetBlock(int32 X, int32 Y, int32 Z) const;
+
+	/** Player edit. Writes the voxel and flags the chunk as modified so it is persisted. */
 	void SetBlock(int32 X, int32 Y, int32 Z, uint8 BlockID);
+
+	/**
+	 * World-generation write. Writes the voxel but leaves bIsModified untouched.
+	 * Generated terrain is reproducible from the seed, so it must never be saved:
+	 * flagging it here would write a full 16 KB copy of every visited chunk.
+	 */
+	void SetBlockGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID);
 
 	/** Builds mesh data into the provided buffers (thread-safe) */
 	void GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshData& OutNonSolidMeshData) const;
@@ -167,6 +176,15 @@ public:
 	UPROPERTY()
 	FIntVector LastTargetedVoxelCoord = FIntVector(-1, -1, -1);
 
+	/**
+	 * True when LastTargetedVoxelCoord holds a real target.
+	 * World voxel X and Y are signed coordinates: a negative component is a perfectly valid
+	 * position, so it must never be used as the "no target" sentinel (that bug made every
+	 * block and leaf at X < 0 unbreakable).
+	 */
+	UPROPERTY()
+	bool bHasTargetedVoxel = false;
+
 	/** Global static helper to get the targeted block ID from any player controller camera without requiring a chunk reference */
 	UFUNCTION(BlueprintPure, Category = "Voxel|Mining", meta = (WorldContext = "WorldContextObject"))
 	static uint8 GetGlobalTargetedBlockID(UObject* WorldContextObject, APlayerController* PlayerController);
@@ -179,7 +197,11 @@ public:
 	UPROPERTY()
 	TMap<int32, uint8> BlockMetadata;
 
+	/** Player edit with rotation/state data. Flags the chunk as modified. */
 	void SetBlockWithMeta(int32 X, int32 Y, int32 Z, uint8 BlockID, uint8 MetaRotation);
+
+	/** World-generation counterpart of SetBlockWithMeta(); leaves bIsModified untouched. */
+	void SetBlockWithMetaGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID, uint8 MetaRotation);
 
 protected:
 	virtual void BeginPlay() override;

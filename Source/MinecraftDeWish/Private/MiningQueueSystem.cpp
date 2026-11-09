@@ -24,8 +24,9 @@ void UMiningQueueSystem::SetToolTier(EToolTier NewTier)
 
 bool UMiningQueueSystem::QueueBlock(const FIntVector& VoxelCoord, uint8 BlockID, float Durability, float MiningForceOverride)
 {
-	// Do not queue invalid coordinates or air
-	if (VoxelCoord.X < 0 || VoxelCoord.Y < 0 || VoxelCoord.Z < 0 || BlockID == 0)
+	// X/Y are signed world voxel coordinates: the world extends into negative space on both
+	// axes, so only the vertical axis is bounded below. Air (BlockID 0) is never a target.
+	if (VoxelCoord.Z < 0 || BlockID == 0)
 	{
 		return false;
 	}

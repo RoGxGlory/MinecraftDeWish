@@ -30,12 +30,29 @@ Complete registry of all voxel block types, texture mappings, collision modes, h
 | **19** | `Torch` | Torch | Hand / Any | 0.05 | **QueryOnly** | Yes | Emits light; walk-through |
 | **20** | `Barrel` | Barrel | Axe | 2.5 | QueryAndPhysics | No | Wooden storage block |
 | **21** | `Glass` | Glass | Hand / Any | 0.3 | QueryAndPhysics | Yes | Transparent decorative block |
-| **22** | `Fence` | Oak Fence | Axe | 2.0 | QueryAndPhysics | Yes | Wooden perimeter barrier |
-| **23** | `Fence_Door` | Fence Gate | Axe | 2.0 | QueryAndPhysics | Yes | Operable wooden gate |
-| **24** | `Door` | Wooden Door | Axe | 3.0 | QueryAndPhysics | Yes | Operable entrance barrier |
+| **22** | `Fence` | Oak Fence | Axe | 2.0 | QueryAndPhysics | Yes | Cube placeholder — thin-post geometry not implemented |
+| **23** | `Fence_Door` | Fence Gate | Axe | 2.0 | QueryAndPhysics | Yes | Cube placeholder — open/close state not implemented |
+| **24** | `Door` | Wooden Door | Axe | 3.0 | QueryAndPhysics | Yes | Cube placeholder — open/close state not implemented |
 | **25** | `Bedrock` | Bedrock | Indestructible | $\infty$ | QueryAndPhysics | No | Indestructible world floor |
-| **26** | `Water` | Water | Bucket | 100.0 | QueryOnly | Yes | Liquid block |
+| **26** | `Water` | Water | Bucket | 100.0 | QueryOnly | Yes | Placeholder — no liquid simulation, no bucket item |
 | **27** | `Coal_Ore` | Coal Ore | Pickaxe | 3.0 | QueryAndPhysics | No | Smelting fuel ore |
+
+### Implementation limits (audit 2026-11-09)
+
+The table above is the **intended** block catalogue. Three things it cannot express:
+
+1. **Only one non-solid block exists.** `FBlockHelpers::IsNonSolidBlock()` returns true for
+   `Torch` and nothing else. Fence, Fence Gate, Door and Glass are rendered and collided as
+   **full opaque cubes**, despite the `Transparent` flag. Any non-cubic geometry needs a new
+   mesh path first.
+2. **No interactive block state.** `Door` and `Fence_Door` have no open/closed state in code;
+   the "operable" wording was aspirational.
+3. **`Water` is not implemented.** No liquid simulation, no bucket item, no fluid meshing. It
+   is listed because the block ID is reserved, not because it is playable.
+
+Also note the `Transparent` column is a *rendering intent* (alpha/foliage handling in the
+material), not a collision class. Collision is decided by the two-mesh split described in
+`GAME_DESIGN.md` §3.1 and by `IsNonSolidBlock()`.
 
 ---
 
@@ -91,3 +108,21 @@ All voxel faces encode their texture index in vertex buffer attribute `UV1.X`:
 | 34 | `sand` | `sand_n` | `sand_s` |
 | 35 | `stone` | `stone_n` | `stone_s` |
 | 36 | `torch` | `torch_n` | `torch_s` |
+
+The array has **no bedrock and no water slice**. The fallback table in
+`AWorldGenerator::InitializeBlockCache` therefore maps Bedrock (25) to `stone` (35) and
+Water (26) to `glass` (23, transparent). A DataTable row may override either mapping.
+
+Every leaf face is generated, including the faces buried inside a canopy. Leaf-to-leaf culling
+is **disabled** (`bFastLeaves` is stored and persisted as a player preference but has no effect
+on the mesh): with an alpha-tested leaf texture, culling the contact between two leaves turns
+the canopy into a hollow shell — the interior disappears and thin sections let the player see
+straight through the tree. That regression was shipped and then reverted.
+
+The face-culling rule is simply `AWorldGenerator::IsBlockTransparent(NeighborBlockID)`: a face
+is generated when the block on the other side is transparent. Never cull a face that sits behind
+a leaf, because `M_Global` is a *Masked* (alpha-tested), single-sided material: the leaf texture
+has holes, so culling the terrain behind them punches a hole straight through the world.
+Reviving fast leaves requires genuinely opaque leaf geometry first — a per-vertex flag on the
+free vertex-colour channel `G` plus a `max(existing, 1 - G)` branch on the Opacity Mask (see
+`Docs/architecture/voxel-performance-plan.md`, lot 3).

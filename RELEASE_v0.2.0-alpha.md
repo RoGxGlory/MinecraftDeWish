@@ -1,5 +1,10 @@
 # ⛏️ MinecraftDeWish — v0.2.0-alpha Pre-Release
 
+> **📦 ARCHIVE — v0.2.0-alpha release notes.**
+> Frozen as a historical record of what shipped in v0.2. The keyboard scheme and the
+> `(WIP)` markers are accurate for that build; the feature list is not a statement about
+> the current `main`. See `Docs/` for the current state of each system.
+
 > **The Biome Blending & Atmosphere Update**  
 > *A high-performance C++ Minecraft-inspired voxel sandbox built with Unreal Engine 5.8.*
 

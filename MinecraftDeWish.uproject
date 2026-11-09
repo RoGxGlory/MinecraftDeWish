@@ -26,8 +26,15 @@
 			"Enabled": true
 		},
 		{
+			"Name": "EngineWire",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
 			"Name": "ChaosVehiclesPlugin",
-			"Enabled": true
+			"Enabled": false
 		}
 	]
 }

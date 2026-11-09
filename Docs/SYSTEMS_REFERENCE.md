@@ -49,9 +49,38 @@ Core coordinator actor placed in the world.
   - `bool InteractWithTargetBlock()`: Proximity right-click interaction with Crafting Tables and Furnaces.
   - `uint8 GetTargetedBlockType() const`: Returns targeted block ID for UI decisions.
   - `void EnsureDropItemBound()`: Automatically binds `IA_DropItem` on the player pawn's `UEnhancedInputComponent` to execute `DropItemFromInventory`.
+  - `int32 SetRenderDistance(int32 NewRenderDistance)`: Runtime render-distance change (Minecraft-style). Clamps to `[MinRenderDistance = 2, MaxRenderDistance = 64]`, persists the value to `GameUserSettings.ini` under `[MinecraftDeWish.GameSettings] RenderDistance`, and re-runs chunk streaming when a player chunk is known. Returns the effective value.
+  - `int32 GetRenderDistance() const`: Effective render distance in chunks (radius).
+  - `bool SetFastLeaves(bool bNewFastLeaves)`: Stores the player's leaf rendering preference and persists it to `GameUserSettings.ini` under `[MinecraftDeWish.GameSettings] FastLeaves`. **Currently has no visual effect**: leaf-to-leaf culling is disabled because it produced a hollow canopy with the alpha-tested leaf texture, so calling it does not remesh anything. Returns the effective value.
+  - `bool GetFastLeaves() const`: Current stored leaf rendering preference.
+  - `bool IsBlockTransparent(uint8 BlockID) const`: Both the "can you see through it" query and the face-culling rule — a face is generated when the neighbouring block is transparent. There is no separate `IsFaceVisible`; a face behind a leaf is always generated because the leaf texture is alpha-tested.
+  - `const FVoxelFrameStats& GetLastFrameStats() const`: Streaming cost measured during the previous tick (streaming / generation / mesh / remesh milliseconds plus chunk counters). Diagnostic only.
+  - `int32 GetActiveChunkCount() const`, `int32 GetPendingGenerationCount() const`, `int32 GetPendingRemeshCount() const`: Streaming queue depths for diagnostics and the benchmark.
+  - `void SetBlockGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID)` / `void SetBlockWithMetaGenerated(...)` on `AChunkActor`: world-generation writes that do not flag the chunk as modified (see ADR-0002).
+- **Settings**:
+  - `RenderDistance` (chunks, radius): default `8`, editable in the details panel, clamped 2–64. Restored from `GameUserSettings.ini` at `BeginPlay` before the first streaming pass; a missing entry falls back to the default.
+  - `bFastLeaves`: default `true`. Player-facing leaf rendering preference; restored from `GameUserSettings.ini` at `BeginPlay` before the first generation pass. Stored only — it does not change the mesh today (see above).
 - **Delegates**:
   - `OnCraftingTableOpened`: Broadcast when player right-clicks a Crafting Table within 4 blocks.
   - `OnFurnaceOpened`: Broadcast when player right-clicks a Furnace within 4 blocks.
+
+### 1.1 Voxel benchmark (`UVoxelBenchSubsystem`)
+
+Diagnostic harness for the voxel performance plan. It samples one `AWorldGenerator` per frame
+and writes a CSV to `Saved/Profiling/VoxelBench-<label>-<timestamp>.csv`.
+
+- **Why it exists**: every optimisation claim in `Docs/architecture/voxel-performance-plan.md`
+  must be backed by a measured before/after. This is the measuring instrument.
+- **Cost when idle**: none. `IsTickable()` returns false unless a recording is running.
+- **Start / stop**: console `mdw.Bench.Start [label]`, `mdw.Bench.Stop`, `mdw.Bench.Marker <text>`;
+  Blueprint via `StartRecording` / `StopRecording` / `AddMarker`; automatically with the
+  `-VoxelBench` command-line switch or `mdw.Bench.AutoStart 1`.
+- **CSV columns**: sample, elapsed seconds, frame ms, active chunks, pending generation, pending
+  remesh, chunks generated/remeshed this frame, per-stage milliseconds (streaming, generation,
+  mesh, remesh), player position, render distance, fast-leaves flag, optional marker.
+- **On stop** it logs the headline summary: frame count, duration, average/p50/p95/p99/max frame
+  time, and how many frames exceeded 16.7 ms and 33.3 ms.
+- **Scope**: Game and PIE worlds only; the editor preview world has no gameplay streaming.
 
 ---
 
@@ -107,21 +136,28 @@ Physical voxel item drops in the world.
 ---
 
 ### 5. `AChaosBlockDestructionActor` (`AActor`)
-Real-time physical block fracture system powered by Unreal Engine 5.8 Chaos physics.
 
-- **Non-Deterministic Fracturing**:
-  - Dynamically fractures broken blocks into $8\text{--}18$ irregular 3D polyhedral cells using randomized 3D cutting planes and perturbed internal lattice vertices.
-- **Visual Texture Mapping**:
-  - Outer fragment faces align with the original block's exact sub-UV face coordinates and texture slices from `/Game/Materials/M_Global.M_Global`.
-  - Interior fracture faces automatically sample authentic interior block slices (e.g., Dirt for Grass, Wood Planks for Logs, Stone for Ores).
-- **Chaos Physics Simulation**:
-  - Each fragment component builds its own convex collision hull (`AddCollisionConvexMesh`) with `bUseComplexAsSimpleCollision = false`.
-  - Simulates active rigid-body dynamics via the Chaos solver (`SetSimulatePhysics(true)`), colliding against chunk procedural meshes and ground geometry.
-  - Receives non-deterministic explosive radial bursts, impact directional bias along the mining strike normal, upward pop, and randomized 3D angular torque.
-- **Lifecycle & Despawn**:
-  - Fragments simulate freely for `SimulationLifetime` ($2.2\text{ s}$).
-  - Smoothly shrink and fade over `FadeDuration` ($0.8\text{ s}$).
-  - Cleans up and destroys all components upon completion, ensuring zero memory leaks or physics solver overhead.
+> **Naming warning.** The class is named "Chaos" but it does **not** use the Chaos
+> destruction or rigid-body solver. It is a hand-written ballistic debris simulation
+> built on a single `UProceduralMeshComponent`. Do not look for `Chaos::` types in this
+> file, and do not document it as Chaos destruction. A rename is tracked as tech debt.
+
+Ballistic voxel debris system. Breaking a block spawns a short-lived burst of small
+textured fragments that tumble and settle.
+
+- **Fragmentation**: 32–44 small fragments per broken block, roughly 5–9 cm across
+  (`FBlockDestructionParticle::HalfExtents` defaults to 3.5 UU). Fragments are **not**
+  convex fracture cells and carry no per-fragment collision component.
+- **Visual texture mapping**:
+  - Outer faces reuse the broken block's exact sub-UV face coordinates and `Texture2DArray` slice, so debris matches `M_Global`.
+  - Freshly exposed faces sample an interior slice (Dirt under Grass, planks under logs, stone under ores), resolved by `ResolveBlockTextures()` against `Block_DataTable`.
+- **Simulation**: manual integration, not the physics engine.
+  - Per-tick velocity integration with `GravityStrength = 1350 cm/s²`.
+  - Per-particle ground sweeps against world geometry; `bIsGrounded` latches when a fragment settles.
+  - Initial burst is biased by the mining strike normal and hit point, plus upward pop and randomized angular velocity.
+  - All fragments share one `UProceduralMeshComponent`; buffers are rebuilt each tick, so the whole burst costs one draw call.
+- **Lifecycle**: `SimulationLifetime = 2.0 s` of tumbling, then a `FadeDuration = 0.8 s` shrink-and-fade, then the actor destroys itself.
+- **Tunables** (all `EditAnywhere`): `BlockScale`, `SimulationLifetime`, `FadeDuration`, `GravityStrength`.
 
 ---
 
@@ -148,7 +184,7 @@ Player equipment component managing dedicated tool slots.
 
 ---
 
-### 6. `FToolInstance` (`ToolTypes.h`)
+### 7. `FToolInstance` (`ToolTypes.h`)
 Structure representing an individual tool instance.
 
 - **Properties**: `ToolType`, `ToolTier`, `CurrentDurability`, `MaxDurability`.
@@ -160,7 +196,7 @@ Structure representing an individual tool instance.
 
 ---
 
-### 7. `UPlayerVitalSystem` (`UActorComponent`)
+### 8. `UPlayerVitalSystem` (`UActorComponent`)
 Player health and progression manager.
 
 - **Properties**:
@@ -180,7 +216,7 @@ Player health and progression manager.
 
 ---
 
-### 8. `UDayNightCycleSystem` (`UActorComponent`)
+### 9. `UDayNightCycleSystem` (`UActorComponent`)
 Manages planetary daylight progression and sunlight calculations.
 
 - **Properties**:
@@ -196,7 +232,7 @@ Manages planetary daylight progression and sunlight calculations.
 
 ---
 
-### 9. `UMobSpawnerSystem` (`UActorComponent`)
+### 10. `UMobSpawnerSystem` (`UActorComponent`)
 Handles hostile creature life cycles and ecological density.
 
 - **Properties**:
@@ -212,7 +248,7 @@ Handles hostile creature life cycles and ecological density.
 
 ---
 
-### 10. `AMobCharacter` (`ACharacter`)
+### 11. `AMobCharacter` (`ACharacter`)
 Autonomous hostile creature pawn.
 
 - **Mob Types**: `Zombie`, `Skeleton`, `Spider`, `Creeper`.
@@ -226,7 +262,7 @@ Autonomous hostile creature pawn.
 
 ---
 
-### 11. `AXPOrbPickup` (`AActor`)
+### 12. `AXPOrbPickup` (`AActor`)
 Physical experience orb in the world.
 
 - **Visuals**: Procedural diamond octahedron mesh with glowing green-yellow vertex colors.
@@ -235,7 +271,7 @@ Physical experience orb in the world.
 
 ---
 
-### 12. PBR Master Material (`M_Global`)
+### 13. PBR Master Material (`M_Global`)
 Unified terrain shader sampling 32×32 texture arrays via `UV0` (face coordinates) and `UV1.X` (slice index):
 - **`Textures_Array`** (TextureSampleParameter2DArray): Base Color.
 - **`Normals_Array`** (TextureSampleParameter2DArray, Sampler: Normal): Tangent-space normals.

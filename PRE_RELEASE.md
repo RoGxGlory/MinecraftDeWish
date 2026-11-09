@@ -1,5 +1,10 @@
 # ⛏️ MinecraftDeWish — v0.1.0-alpha Pre-Release
 
+> **📦 ARCHIVE — v0.1.0-alpha release notes.**
+> Frozen as a historical record. Controls, feature status and the described scope are
+> those of v0.1 and no longer reflect the project. For the current state see
+> `RELEASE_v0.2.0-alpha.md` and `Docs/`.
+
 > **The Foundation & Patrix PBR Graphics Overhaul**  
 > *A high-performance C++ Minecraft-inspired voxel sandbox built with Unreal Engine 5.8.*
 

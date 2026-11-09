@@ -18,6 +18,28 @@
 #include "EnhancedInputComponent.h"
 #include "InputAction.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Misc/ConfigCacheIni.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "Kismet/KismetMaterialLibrary.h"
+#include "Materials/MaterialParameterCollection.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogWorldGenerator, Log, All);
+
+namespace
+{
+	/** GameUserSettings.ini section/key holding the player's persisted render distance. */
+	const TCHAR* const GRenderDistanceSection = TEXT("MinecraftDeWish.GameSettings");
+	const TCHAR* const GRenderDistanceKey = TEXT("RenderDistance");
+
+	/** Leaf rendering mode: true = fast leaves (canopy culled), false = fancy leaves. */
+	const TCHAR* const GFastLeavesKey = TEXT("FastLeaves");
+
+	/** Foliage wind strength multiplier applied to MPC_World's WindStrength scalar. */
+	const TCHAR* const GWindStrengthKey = TEXT("WindStrength");
+
+	/** Material Parameter Collection that carries the runtime world knobs read by M_Global. */
+	const TCHAR* const GWorldCollectionPath = TEXT("/Game/Materials/MPC_World.MPC_World");
+}
 
 AWorldGenerator::AWorldGenerator()
 {
@@ -65,6 +87,23 @@ void AWorldGenerator::BeginPlay()
 	Noise.SetSeed(WorldSeed);
 	InitializeBlockCache();
 
+	// Restore the player's saved render distance before the first streaming pass.
+	LoadRenderDistanceSetting();
+
+	// Same for the leaf rendering mode: it changes face culling, so first-generation chunks
+	// must already use the player's choice.
+	LoadFastLeavesSetting();
+
+	// The wind strength lives in MPC_World, not in the mesh: load it and push it before the
+	// first chunk is drawn so the canopy does not start still and then snap into motion.
+	LoadWindStrengthSetting();
+	if (!WorldParameterCollection)
+	{
+		WorldParameterCollection = Cast<UMaterialParameterCollection>(
+			StaticLoadObject(UMaterialParameterCollection::StaticClass(), nullptr, GWorldCollectionPath));
+	}
+	ApplyWindStrengthSetting();
+
 	if (!ChunkActorClass)
 	{
 		ChunkActorClass = LoadClass<AChunkActor>(nullptr, TEXT("/Game/General_Blueprints/Blocks/BP_ChunkActor.BP_ChunkActor_C"));
@@ -87,13 +126,10 @@ void AWorldGenerator::BeginPlay()
 	BlockHighlightActor = GetWorld()->SpawnActor<ABlockHighlightActor>(ABlockHighlightActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, HighlightParams);
 
 	WorldSavePath = FPaths::ProjectSavedDir() / TEXT("SaveGames") / FString::Printf(TEXT("World_%d"), WorldSeed);
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
-	// Purge stale saves from prior terrain generation parameters to avoid corrupt chunks
-	if (PlatformFile.DirectoryExists(*WorldSavePath))
-	{
-		PlatformFile.DeleteDirectoryRecursively(*WorldSavePath);
-	}
+	// Never delete this directory at startup: it holds every player edit. A terrain-parameter
+	// change must be handled by a format version stored in the chunk file, not by wiping data.
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	PlatformFile.CreateDirectoryTree(*WorldSavePath);
 
 	// Initial player positioning check
@@ -153,6 +189,9 @@ void AWorldGenerator::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// Diagnostic counters describe this tick only; every measurement below accumulates into it.
+	LastFrameStats = FVoxelFrameStats();
+
 	// Track player chunk
 	APlayerController* PC = GetWorld()->GetFirstPlayerController();
 	if (PC && PC->GetPawn())
@@ -167,6 +206,7 @@ void AWorldGenerator::Tick(float DeltaTime)
 	}
 
 	ProcessGenerationQueue();
+	ProcessRemeshQueue();
 	UpdateTargetBlockHighlight();
 	EnsureDestroySystemConfigured();
 	EnsureDropItemBound();
@@ -242,9 +282,12 @@ void AWorldGenerator::InitializeBlockCache()
 	RegisterDefault(22, 33, 33, 33, 33, true); // Fence (33 planks)
 	RegisterDefault(23, 33, 33, 33, 33, true); // Fence Door
 	RegisterDefault(24, 10, 10, 10, 10, true); // Door (10 dark_oak_door_bottom)
-	RegisterDefault(25, 5, 5, 5, 5);           // Coal Ore (5 coal_ore)
-	RegisterDefault(26, 4, 4, 4, 4);           // Coal Block (4 coal_block)
-	RegisterDefault(27, 6, 6, 6, 6);           // Bedrock fallback -> 6 Cobblestone (NOT coal!)
+	// Bedrock and Water have no dedicated slice in Global_Textures_Array (37 slices, see
+	// Docs/BLOCK_REGISTRY.md). Reuse the closest existing one instead of shifting the table:
+	// Bedrock reads as stone, Water as glass. Keep the comment on the line it describes.
+	RegisterDefault(25, 35, 35, 35, 35);       // Bedrock -> stone (35); no bedrock slice
+	RegisterDefault(26, 23, 23, 23, 23, true); // Water placeholder -> glass (23), transparent
+	RegisterDefault(27, 5, 5, 5, 5);           // Coal Ore (5 coal_ore)
 
 	// If a DataTable is assigned, read its actual row properties via reflection
 	if (BlockDataTable)
@@ -262,6 +305,8 @@ void AWorldGenerator::InitializeBlockCache()
 				int32 TopTex = 0;
 				int32 FrontTex = 0;
 				int32 BottomTex = 0;
+				bool bRowTransparent = false;
+				bool bHasTransparentProperty = false;
 
 				for (TFieldIterator<FProperty> PropIt(RowStruct); PropIt; ++PropIt)
 				{
@@ -273,6 +318,14 @@ void AWorldGenerator::InitializeBlockCache()
 						if (FIntProperty* IntProp = CastField<FIntProperty>(Prop))
 						{
 							BlockID = IntProp->GetPropertyValue_InContainer(RowData);
+						}
+					}
+					else if (PropName.Contains(TEXT("Transparent"), ESearchCase::IgnoreCase))
+					{
+						if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Prop))
+						{
+							bRowTransparent = BoolProp->GetPropertyValue_InContainer(RowData);
+							bHasTransparentProperty = true;
 						}
 					}
 					else if (PropName.Contains(TEXT("Side"), ESearchCase::IgnoreCase) && PropName.Contains(TEXT("Texture"), ESearchCase::IgnoreCase))
@@ -314,8 +367,20 @@ void AWorldGenerator::InitializeBlockCache()
 					Data.BottomTexture = BottomTex;
 					Data.SideTexture = SideTex;
 					Data.FrontTexture = FrontTex;
-					Data.bIsTransparent = (BlockID == 17 || BlockID == 21 || BlockID == 19 || BlockID == 26);
+					// A row that declares its own transparency wins; otherwise fall back to the
+					// blocks that are visually see-through in the current texture set.
+					Data.bIsTransparent = bHasTransparentProperty
+						? bRowTransparent
+						: (BlockID == 17 || BlockID == 19 || BlockID == 21 ||
+						   BlockID == 22 || BlockID == 23 || BlockID == 24 || BlockID == 26);
 					BlockTextureCache.Add(static_cast<uint8>(BlockID), Data);
+
+					// Keep the face-culling set in sync: transparency read from the DataTable was
+					// previously computed and then dropped, so those blocks never got culling.
+					if (Data.bIsTransparent)
+					{
+						TransparentBlockIDs.Add(static_cast<uint8>(BlockID));
+					}
 				}
 			}
 		}
@@ -552,8 +617,211 @@ bool AWorldGenerator::GetBlockAtWorldLocation(const FVector& WorldLocation, uint
 	return GetVoxelAt(VoxelX, VoxelY, VoxelZ, OutBlockID);
 }
 
+void AWorldGenerator::LoadRenderDistanceSetting()
+{
+	int32 SavedRenderDistance = 0;
+	const bool bLoaded = GConfig
+		&& GConfig->GetInt(GRenderDistanceSection, GRenderDistanceKey, SavedRenderDistance, GGameUserSettingsIni);
+
+	RenderDistance = FMath::Clamp(
+		bLoaded ? SavedRenderDistance : RenderDistance,
+		MinRenderDistance,
+		MaxRenderDistance);
+
+	UE_LOG(LogWorldGenerator, Log, TEXT("Render distance = %d chunks (radius), %s"),
+		RenderDistance,
+		bLoaded ? TEXT("restored from GameUserSettings.ini") : TEXT("using default"));
+}
+
+void AWorldGenerator::SaveRenderDistanceSetting() const
+{
+	if (!GConfig)
+	{
+		return;
+	}
+
+	GConfig->SetInt(GRenderDistanceSection, GRenderDistanceKey, RenderDistance, GGameUserSettingsIni);
+	GConfig->Flush(false, GGameUserSettingsIni);
+}
+
+int32 AWorldGenerator::SetRenderDistance(int32 NewRenderDistance)
+{
+	const int32 ClampedRenderDistance = FMath::Clamp(NewRenderDistance, MinRenderDistance, MaxRenderDistance);
+	if (ClampedRenderDistance == RenderDistance)
+	{
+		return RenderDistance;
+	}
+
+	RenderDistance = ClampedRenderDistance;
+	SaveRenderDistanceSetting();
+
+	// Streaming needs a player chunk coordinate; before BeginPlay the value is only stored and persisted.
+	if (bHasPlayerCoord)
+	{
+		UpdateChunkStreaming();
+	}
+
+	UE_LOG(LogWorldGenerator, Log, TEXT("Render distance set to %d chunks (radius)"), RenderDistance);
+	return RenderDistance;
+}
+
+void AWorldGenerator::LoadFastLeavesSetting()
+{
+	bool bSavedFastLeaves = bFastLeaves;
+	const bool bLoaded = GConfig
+		&& GConfig->GetBool(GRenderDistanceSection, GFastLeavesKey, bSavedFastLeaves, GGameUserSettingsIni);
+
+	if (bLoaded)
+	{
+		bFastLeaves = bSavedFastLeaves;
+	}
+
+	UE_LOG(LogWorldGenerator, Log, TEXT("Fast leaves = %s (%s)"),
+		bFastLeaves ? TEXT("true") : TEXT("false"),
+		bLoaded ? TEXT("restored from GameUserSettings.ini") : TEXT("using default"));
+}
+
+void AWorldGenerator::SaveFastLeavesSetting() const
+{
+	if (!GConfig)
+	{
+		return;
+	}
+
+	GConfig->SetBool(GRenderDistanceSection, GFastLeavesKey, bFastLeaves, GGameUserSettingsIni);
+	GConfig->Flush(false, GGameUserSettingsIni);
+}
+
+bool AWorldGenerator::SetFastLeaves(bool bNewFastLeaves)
+{
+	if (bNewFastLeaves == bFastLeaves)
+	{
+		return bFastLeaves;
+	}
+
+	bFastLeaves = bNewFastLeaves;
+	SaveFastLeavesSetting();
+
+	// The flag is stored but deliberately does not change the mesh yet: culling the
+	// contact between two leaves while the leaf texture stays alpha-tested turns the
+	// canopy into a hollow shell. Revive it only once leaves are genuinely opaque
+	// (vertex-colour channel R + Opacity Mask in M_Global, see the performance plan).
+	UE_LOG(LogWorldGenerator, Log, TEXT("Fast leaves preference stored as %s (no visual effect until opaque leaves land)"),
+		bFastLeaves ? TEXT("true") : TEXT("false"));
+
+	return bFastLeaves;
+}
+
+void AWorldGenerator::LoadWindStrengthSetting()
+{
+	float SavedWindStrength = WindStrength;
+	const bool bLoaded = GConfig
+		&& GConfig->GetFloat(GRenderDistanceSection, GWindStrengthKey, SavedWindStrength, GGameUserSettingsIni);
+
+	WindStrength = FMath::Clamp(
+		bLoaded ? SavedWindStrength : WindStrength,
+		MinWindStrength,
+		MaxWindStrength);
+
+	UE_LOG(LogWorldGenerator, Log, TEXT("Wind strength = %.2f (%s)"),
+		WindStrength,
+		bLoaded ? TEXT("restored from GameUserSettings.ini") : TEXT("using default"));
+}
+
+void AWorldGenerator::SaveWindStrengthSetting() const
+{
+	if (!GConfig)
+	{
+		return;
+	}
+
+	GConfig->SetFloat(GRenderDistanceSection, GWindStrengthKey, WindStrength, GGameUserSettingsIni);
+	GConfig->Flush(false, GGameUserSettingsIni);
+}
+
+void AWorldGenerator::ApplyWindStrengthSetting() const
+{
+	if (!WorldParameterCollection)
+	{
+		return;
+	}
+
+	// A parameter collection is global state: one write drives every chunk's M_Global,
+	// so no per-chunk material instance is needed and no mesh is touched.
+	UKismetMaterialLibrary::SetScalarParameterValue(
+		GetWorld(),
+		WorldParameterCollection,
+		TEXT("WindStrength"),
+		WindStrength);
+}
+
+float AWorldGenerator::SetWindStrength(float NewWindStrength)
+{
+	const float ClampedWindStrength = FMath::Clamp(NewWindStrength, MinWindStrength, MaxWindStrength);
+	if (FMath::IsNearlyEqual(ClampedWindStrength, WindStrength))
+	{
+		return WindStrength;
+	}
+
+	WindStrength = ClampedWindStrength;
+	ApplyWindStrengthSetting();
+	SaveWindStrengthSetting();
+
+	UE_LOG(LogWorldGenerator, Log, TEXT("Wind strength set to %.2f"), WindStrength);
+	return WindStrength;
+}
+
+void AWorldGenerator::QueueFullRemesh()
+{
+	RemeshQueue.Reset();
+	RemeshQueue.Reserve(ActiveChunks.Num());
+
+	for (const TPair<FChunkCoord, AChunkActor*>& Pair : ActiveChunks)
+	{
+		if (Pair.Value)
+		{
+			RemeshQueue.Add(Pair.Key);
+		}
+	}
+}
+
+void AWorldGenerator::ProcessRemeshQueue()
+{
+	if (RemeshQueue.Num() == 0)
+	{
+		return;
+	}
+
+	TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ProcessRemeshQueue);
+
+	const double RemeshStartSeconds = FPlatformTime::Seconds();
+
+	int32 RemeshedCount = 0;
+	while (RemeshQueue.Num() > 0 && RemeshedCount < MaxChunkRemeshesPerTick)
+	{
+		const FChunkCoord Coord = RemeshQueue[0];
+		RemeshQueue.RemoveAt(0);
+
+		if (AChunkActor* const* FoundChunk = ActiveChunks.Find(Coord))
+		{
+			if (AChunkActor* Chunk = *FoundChunk)
+			{
+				Chunk->UpdateMesh();
+				++RemeshedCount;
+			}
+		}
+	}
+
+	LastFrameStats.RemeshMs += (FPlatformTime::Seconds() - RemeshStartSeconds) * 1000.0;
+	LastFrameStats.ChunksRemeshed += RemeshedCount;
+}
+
 void AWorldGenerator::UpdateChunkStreaming()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_UpdateChunkStreaming);
+
+	const double StreamingStartSeconds = FPlatformTime::Seconds();
+
 	const int32 Radius = RenderDistance;
 	const int32 RadiusSq = Radius * Radius;
 
@@ -613,10 +881,14 @@ void AWorldGenerator::UpdateChunkStreaming()
 		}
 		ActiveChunks.Remove(Coord);
 	}
+
+	LastFrameStats.StreamingMs += (FPlatformTime::Seconds() - StreamingStartSeconds) * 1000.0;
 }
 
 void AWorldGenerator::ProcessGenerationQueue()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ProcessGenerationQueue);
+
 	int32 GeneratedCount = 0;
 
 	while (GenerationQueue.Num() > 0 && GeneratedCount < MaxChunkGenerationsPerFrame)
@@ -642,9 +914,25 @@ void AWorldGenerator::ProcessGenerationQueue()
 		if (Chunk)
 		{
 			ActiveChunks.Add(Coord, Chunk);
-			GenerateChunkData(Chunk);
-			Chunk->UpdateMesh();
-			UpdateNeighborChunkMeshes(Coord);
+			{
+				const double GenerationStartSeconds = FPlatformTime::Seconds();
+				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_GenerateChunkData);
+				GenerateChunkData(Chunk);
+				LastFrameStats.GenerationMs += (FPlatformTime::Seconds() - GenerationStartSeconds) * 1000.0;
+			}
+			{
+				const double MeshStartSeconds = FPlatformTime::Seconds();
+				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ChunkUpdateMesh);
+				Chunk->UpdateMesh();
+				LastFrameStats.MeshMs += (FPlatformTime::Seconds() - MeshStartSeconds) * 1000.0;
+			}
+			{
+				const double NeighborStartSeconds = FPlatformTime::Seconds();
+				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_UpdateNeighborChunkMeshes);
+				UpdateNeighborChunkMeshes(Coord);
+				LastFrameStats.MeshMs += (FPlatformTime::Seconds() - NeighborStartSeconds) * 1000.0;
+			}
+			++LastFrameStats.ChunksGenerated;
 			++GeneratedCount;
 		}
 
@@ -879,22 +1167,22 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 				if (Z == 0)
 				{
 					// Indestructible bedrock layer at the floor
-					Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Bedrock));
+					Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Bedrock));
 				}
 				else if (Z == TerrainHeight)
 				{
 					// Surface block
 					if (Biome == EBiomeType::Desert)
 					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Sand));
+						Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Sand));
 					}
 					else if (Biome == EBiomeType::Mountains && Z > static_cast<int32>(ChunkHeight * 0.65f))
 					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Stone));
+						Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Stone));
 					}
 					else
 					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Grass));
+						Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Grass));
 					}
 				}
 				else if (Z < TerrainHeight && Z >= TerrainHeight - 3)
@@ -902,22 +1190,22 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 					// Sub-surface layer
 					if (Biome == EBiomeType::Desert)
 					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Sand));
+						Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Sand));
 					}
 					else
 					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Dirt));
+						Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Dirt));
 					}
 				}
 				else if (Z < TerrainHeight - 3)
 				{
 					// Deep underground stone
-					Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Stone));
+					Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Stone));
 				}
 				else
 				{
 					// Air above surface
-					Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Air));
+					Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Air));
 				}
 			}
 
@@ -940,7 +1228,7 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 
 						if ((N1 * N1 + N2 * N2) < 0.0035f)
 						{
-							Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Air));
+							Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Air));
 						}
 					}
 				}
@@ -962,7 +1250,7 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 						{
 							if (Noise.Fractal3D(WX * 2.5f, WY * 2.5f, WZ * 2.5f, 2, 0.05f) > 0.74f)
 							{
-								Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Diamond_Ore));
+								Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Diamond_Ore));
 								continue;
 							}
 						}
@@ -972,7 +1260,7 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 						{
 							if (Noise.Fractal3D(WX * 2.0f, WY * 2.0f, WZ * 2.0f + 100.0f, 2, 0.045f) > 0.68f)
 							{
-								Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Gold_Ore));
+								Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Gold_Ore));
 								continue;
 							}
 						}
@@ -982,7 +1270,7 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 						{
 							if (Noise.Fractal3D(WX * 1.5f, WY * 1.5f, WZ * 1.5f + 200.0f, 2, 0.038f) > 0.60f)
 							{
-								Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Iron_Ore));
+								Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Iron_Ore));
 								continue;
 							}
 						}
@@ -992,7 +1280,7 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 						{
 							if (Noise.Fractal3D(WX * 1.2f, WY * 1.2f, WZ * 1.2f + 300.0f, 2, 0.032f) > 0.54f)
 							{
-								Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Coal_Ore));
+								Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Coal_Ore));
 								continue;
 							}
 						}
@@ -1002,7 +1290,7 @@ void AWorldGenerator::GenerateChunkData(AChunkActor* Chunk)
 						{
 							if (Noise.Fractal3D(WX * 3.0f, WY * 3.0f, WZ * 3.0f + 400.0f, 2, 0.06f) > 0.78f)
 							{
-								Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Emerald_Ore));
+								Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Emerald_Ore));
 								continue;
 							}
 						}
@@ -1560,32 +1848,38 @@ void AWorldGenerator::HandleDropItemAction()
 
 void AWorldGenerator::UpdateTargetBlockHighlight()
 {
-	if (!BlockHighlightActor)
-	{
-		return;
-	}
-
 	APlayerController* PC = GetWorld()->GetFirstPlayerController();
 	if (!PC)
 	{
-		BlockHighlightActor->HideHighlight();
+		if (BlockHighlightActor)
+		{
+			BlockHighlightActor->HideHighlight();
+		}
 		return;
 	}
 
 	APlayerCameraManager* Camera = PC->PlayerCameraManager;
 	if (!Camera)
 	{
-		BlockHighlightActor->HideHighlight();
+		if (BlockHighlightActor)
+		{
+			BlockHighlightActor->HideHighlight();
+		}
 		return;
 	}
 
+	// Match the destroy system's InteractionDistance (BlockScale * 6.0) so the cached target
+	// and the block the Blueprint trace aims at are always the same one.
 	const FVector Start = Camera->GetCameraLocation();
-	const FVector End = Start + (Camera->GetActorForwardVector() * (BlockScale * 5.5f));
+	const FVector End = Start + (Camera->GetActorForwardVector() * (BlockScale * 6.0f));
 
 	FHitResult Hit;
 	FCollisionQueryParams Params;
 	Params.AddIgnoredActor(this);
-	Params.AddIgnoredActor(BlockHighlightActor);
+	if (BlockHighlightActor)
+	{
+		Params.AddIgnoredActor(BlockHighlightActor);
+	}
 	if (PC->GetPawn())
 	{
 		Params.AddIgnoredActor(PC->GetPawn());
@@ -1610,19 +1904,27 @@ void AWorldGenerator::UpdateTargetBlockHighlight()
 					(static_cast<float>(BY) + 0.5f) * BlockScale,
 					(static_cast<float>(BZ) + 0.5f) * BlockScale
 				);
-				BlockHighlightActor->SetTargetBlock(Center);
+				if (BlockHighlightActor)
+				{
+					BlockHighlightActor->SetTargetBlock(Center);
+				}
 
 				if (AChunkActor* HitChunk = Cast<AChunkActor>(Hit.GetActor()))
 				{
 					HitChunk->LastTargetedHitLocation = Hit.ImpactPoint;
 					HitChunk->LastTargetedVoxelCoord = FIntVector(BX, BY, BZ);
+					// X and Y are signed world coordinates: never infer "no target" from them.
+					HitChunk->bHasTargetedVoxel = true;
 				}
 				return;
 			}
 		}
 	}
 
-	BlockHighlightActor->HideHighlight();
+	if (BlockHighlightActor)
+	{
+		BlockHighlightActor->HideHighlight();
+	}
 }
 
 int32 AWorldGenerator::GetMaxQueueSlots() const

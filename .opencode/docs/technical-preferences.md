@@ -51,7 +51,7 @@
 ## Allowed Libraries / Addons
 
 - Unreal Engine built-in modules
-- Plugins already enabled in `MinecraftDeWish.uproject`: `ModelingToolsEditorMode`, `GameplayStateTree`, `ChaosVehiclesPlugin`
+- Plugins already enabled in `MinecraftDeWish.uproject`: `ModelingToolsEditorMode`, `GameplayStateTree`
 - New dependencies require an ADR in `Docs/architecture/` and explicit approval
 
 ## Architecture Decisions Log

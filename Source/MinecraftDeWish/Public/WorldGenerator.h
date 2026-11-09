@@ -13,6 +13,36 @@
 
 class AChunkActor;
 class ABlockHighlightActor;
+class UMaterialParameterCollection;
+
+/**
+ * Streaming work measured during one tick of AWorldGenerator, in milliseconds.
+ *
+ * Diagnostic only. It exists so the benchmark harness (UVoxelBenchSubsystem) and
+ * Unreal Insights can report where voxel frame time goes: generation, meshing,
+ * neighbour remeshing, deferred remesh and streaming bookkeeping. Gameplay never
+ * reads it, so it can be dropped from a shipping build without changing behaviour.
+ */
+struct FVoxelFrameStats
+{
+	/** Time spent in UpdateChunkStreaming (queueing, sorting, unloading). */
+	double StreamingMs = 0.0;
+
+	/** Time spent in GenerateChunkData (terrain, caves, ores, structures). */
+	double GenerationMs = 0.0;
+
+	/** Time spent building procedural mesh sections, including neighbour remeshes. */
+	double MeshMs = 0.0;
+
+	/** Time spent draining the deferred remesh queue after a rendering setting change. */
+	double RemeshMs = 0.0;
+
+	/** Chunks spawned and generated during this tick. */
+	int32 ChunksGenerated = 0;
+
+	/** Chunks remeshed from the deferred queue during this tick. */
+	int32 ChunksRemeshed = 0;
+};
 
 /** Delegate fired when the crafting table UI should open */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCraftingTableOpened);
@@ -43,13 +73,70 @@ public:
 
 	// ==================== WORLD GENERATION SETTINGS ====================
 
+	/** Lowest render distance a player may select, in chunks (radius around the player). */
+	static constexpr int32 MinRenderDistance = 2;
+
+	/** Highest render distance a player may select, in chunks (radius around the player). */
+	static constexpr int32 MaxRenderDistance = 64;
+
+	/** Shipped default render distance, in chunks. */
+	static constexpr int32 DefaultRenderDistance = 8;
+
 	/** Procedural generation seed */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Settings")
 	int32 WorldSeed = 1337;
 
-	/** Render distance in chunks (radius around player) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Settings", meta = (ClampMin = "2", ClampMax = "16"))
-	int32 RenderDistance = 6;
+	/**
+	 * Render distance in chunks (radius around the player). Runtime-adjustable through
+	 * SetRenderDistance(); the last chosen value is persisted in GameUserSettings.ini.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Settings", meta = (ClampMin = "2", ClampMax = "64"))
+	int32 RenderDistance = DefaultRenderDistance;
+
+	/** Shipped default for the leaf rendering mode. */
+	static constexpr bool DefaultFastLeaves = true;
+
+	/**
+	 * Leaf rendering mode, exposed to the player settings.
+	 *
+	 * NEUTRALISED: this flag no longer changes the mesh. Every leaf face is generated
+	 * again (fancy leaves), because culling the contact between two leaves while the
+	 * leaf texture stays alpha-tested produced a hollow shell: the canopy interior
+	 * disappeared and thin sections let the player see straight through the tree.
+	 *
+	 * The property, the getter/setter and the persistence are kept so the player
+	 * setting exists today and so the mode can be revived later. Reviving it requires
+	 * genuinely opaque leaves first: use the last free vertex-colour channel (R) to mark
+	 * leaf faces, feed `max(existing, R)` into the M_Global Opacity Mask, and only then
+	 * cull leaf-to-leaf faces again (see Docs/architecture/voxel-performance-plan.md,
+	 * lot 3). G now carries the foliage wind flag, so it is no longer available. Do not
+	 * re-enable culling before that work lands.
+	 *
+	 * Set it with SetFastLeaves() so the value is persisted in GameUserSettings.ini.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Settings")
+	bool bFastLeaves = DefaultFastLeaves;
+
+	/** Wind animation is off below this multiplier. */
+	static constexpr float MinWindStrength = 0.0f;
+
+	/** Highest wind strength a player may select. */
+	static constexpr float MaxWindStrength = 2.0f;
+
+	/** Shipped default wind strength. */
+	static constexpr float DefaultWindStrength = 1.0f;
+
+	/**
+	 * Multiplier on the foliage wind animation; 0 freezes the leaves.
+	 *
+	 * The animation itself lives in M_Global's World Position Offset, driven by the leaf
+	 * flag in vertex-colour channel G, so nothing is remeshed when this changes: the value
+	 * goes to the WindStrength scalar of MPC_World and every material reading it follows.
+	 *
+	 * Set it with SetWindStrength() so the value is persisted in GameUserSettings.ini.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Settings", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	float WindStrength = DefaultWindStrength;
 
 	/** Height of each chunk in blocks (default 64) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Settings", meta = (ClampMin = "32", ClampMax = "256"))
@@ -62,6 +149,13 @@ public:
 	/** Master terrain material using Texture2DArray (M_Global) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering")
 	UMaterialInterface* TerrainMaterial = nullptr;
+
+	/**
+	 * Material Parameter Collection carrying the runtime world knobs (MPC_World).
+	 * Loaded from /Game/Materials/MPC_World when left empty.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering")
+	TObjectPtr<UMaterialParameterCollection> WorldParameterCollection = nullptr;
 
 	/** Optional Blueprint subclass of ChunkActor (e.g. BP_ChunkActor) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Rendering")
@@ -189,7 +283,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
 	float GetDesertBlendAt(int32 WorldX, int32 WorldY) const;
 
-	/** Returns true if the block is visually transparent (e.g. Glass, Leaves, Water) */
+	/**
+	 * Returns true if the block is visually transparent (e.g. Glass, Leaves, Water).
+	 *
+	 * This is also the face-culling rule: a face is generated when the block on the
+	 * other side is transparent. Do not cull a face that sits behind a leaf: the leaf
+	 * texture is alpha-tested, so its holes are see-through and culling the block
+	 * behind them would punch a hole straight into the world.
+	 */
 	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
 	bool IsBlockTransparent(uint8 BlockID) const;
 
@@ -238,6 +339,78 @@ public:
 	/** Save all modified chunks to disk */
 	UFUNCTION(BlueprintCallable, Category = "World Generation|Save")
 	void SaveWorld();
+
+	/**
+	 * Change the render distance at runtime, Minecraft-style.
+	 *
+	 * The requested value is clamped to [MinRenderDistance, MaxRenderDistance], stored in
+	 * GameUserSettings.ini so it survives a restart, and applied immediately: chunks inside
+	 * the new radius are queued for generation, chunks outside it are saved and unloaded.
+	 *
+	 * Writes to disk, so call it when the player commits a setting (slider release / Apply),
+	 * not every frame while dragging.
+	 *
+	 * @param NewRenderDistance Requested radius in chunks.
+	 * @return The effective render distance after clamping.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "World Generation|Settings")
+	int32 SetRenderDistance(int32 NewRenderDistance);
+
+	/** Render distance in chunks currently in effect (clamped to the supported range). */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Settings")
+	int32 GetRenderDistance() const { return RenderDistance; }
+
+	/**
+	 * Stores the leaf rendering preference.
+	 *
+	 * The value is persisted in GameUserSettings.ini but currently has no visual effect:
+	 * the fast-leaf culling is disabled until leaves can be rendered genuinely opaque
+	 * (see bFastLeaves). Calling this does not trigger a remesh.
+	 *
+	 * @param bNewFastLeaves True for fast leaves, false for fancy leaves.
+	 * @return The effective value after the change.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "World Generation|Settings")
+	bool SetFastLeaves(bool bNewFastLeaves);
+
+	/** Current leaf rendering mode: true = fast leaves, false = fancy leaves. */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Settings")
+	bool GetFastLeaves() const { return bFastLeaves; }
+
+	/**
+	 * Change the foliage wind strength at runtime.
+	 *
+	 * The requested value is clamped to [MinWindStrength, MaxWindStrength], stored in
+	 * GameUserSettings.ini so it survives a restart, and applied immediately by writing the
+	 * WindStrength scalar of MPC_World. No chunk is remeshed, so this is safe to call from a
+	 * slider drag.
+	 *
+	 * @param NewWindStrength Requested multiplier; 0 freezes the leaves.
+	 * @return The effective wind strength after clamping.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "World Generation|Settings")
+	float SetWindStrength(float NewWindStrength);
+
+	/** Wind strength multiplier currently in effect (clamped to the supported range). */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Settings")
+	float GetWindStrength() const { return WindStrength; }
+
+	// ==================== DIAGNOSTICS ====================
+
+	/** Streaming work measured during the previous tick. Diagnostic only; see FVoxelFrameStats. */
+	const FVoxelFrameStats& GetLastFrameStats() const { return LastFrameStats; }
+
+	/** Number of chunks currently spawned and streamed in. */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Diagnostics")
+	int32 GetActiveChunkCount() const { return ActiveChunks.Num(); }
+
+	/** Number of chunks queued for generation that have not been spawned yet. */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Diagnostics")
+	int32 GetPendingGenerationCount() const { return GenerationQueue.Num(); }
+
+	/** Number of chunks waiting for a full remesh after a rendering setting change. */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Diagnostics")
+	int32 GetPendingRemeshCount() const { return RemeshQueue.Num(); }
 
 	/** Convert world position into 2D chunk coordinate */
 	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
@@ -349,12 +522,49 @@ private:
 	FChunkCoord CurrentPlayerChunkCoord;
 	bool bHasPlayerCoord = false;
 
+	/** Max chunk meshes rebuilt per streaming tick when a rendering setting changes them all. */
+	static constexpr int32 MaxChunkRemeshesPerTick = 8;
+
+	/** Chunks waiting for a full remesh after a setting that changes face culling. */
+	TArray<FChunkCoord> RemeshQueue;
+
 	TMap<uint8, FBlockTextureData> BlockTextureCache;
 	TSet<uint8> TransparentBlockIDs;
+
+	/** Work measured during the previous Tick; reset at the top of every Tick. */
+	FVoxelFrameStats LastFrameStats;
 
 	FString WorldSavePath;
 
 	void InitializeBlockCache();
+
+	/** Read the persisted render distance from GameUserSettings.ini, falling back to the current value. */
+	void LoadRenderDistanceSetting();
+
+	/** Write the current render distance to GameUserSettings.ini. */
+	void SaveRenderDistanceSetting() const;
+
+	/** Read the persisted leaf rendering mode from GameUserSettings.ini, falling back to the current value. */
+	void LoadFastLeavesSetting();
+
+	/** Write the current leaf rendering mode to GameUserSettings.ini. */
+	void SaveFastLeavesSetting() const;
+
+	/** Read the persisted wind strength from GameUserSettings.ini, falling back to the current value. */
+	void LoadWindStrengthSetting();
+
+	/** Write the current wind strength to GameUserSettings.ini. */
+	void SaveWindStrengthSetting() const;
+
+	/** Push the current wind strength into MPC_World so every material reading it follows. */
+	void ApplyWindStrengthSetting() const;
+
+	/** Queue every active chunk for a full remesh (used when face culling rules change). */
+	void QueueFullRemesh();
+
+	/** Rebuild a bounded number of queued chunk meshes per tick. */
+	void ProcessRemeshQueue();
+
 	void UpdateChunkStreaming();
 	void ProcessGenerationQueue();
 

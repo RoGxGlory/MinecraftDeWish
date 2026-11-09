@@ -22,7 +22,7 @@ void FVoxelStructureGenerator::GenerateTree(
 		const int32 BlockZ = SurfaceZ + Z;
 		if (BlockZ < ChunkHeight)
 		{
-			Chunk->SetBlock(LocalX, LocalY, BlockZ, static_cast<uint8>(EBlockType::Wood_Log));
+			Chunk->SetBlockGenerated(LocalX, LocalY, BlockZ, static_cast<uint8>(EBlockType::Wood_Log));
 		}
 	}
 
@@ -55,7 +55,7 @@ void FVoxelStructureGenerator::GenerateTree(
 					{
 						if (Chunk->GetBlock(Tx, Ty, Z) == static_cast<uint8>(EBlockType::Air))
 						{
-							Chunk->SetBlock(Tx, Ty, Z, static_cast<uint8>(EBlockType::Leaves));
+							Chunk->SetBlockGenerated(Tx, Ty, Z, static_cast<uint8>(EBlockType::Leaves));
 						}
 					}
 				}
@@ -67,11 +67,11 @@ void FVoxelStructureGenerator::GenerateTree(
 		// Horror Forest: Spooky dead branch extensions instead of green leaves
 		const int32 TopZ = SurfaceZ + TrunkHeight;
 		if (Chunk->IsValidCoord(LocalX + 1, LocalY, TopZ))
-			Chunk->SetBlock(LocalX + 1, LocalY, TopZ, static_cast<uint8>(EBlockType::Wood_Log));
+			Chunk->SetBlockGenerated(LocalX + 1, LocalY, TopZ, static_cast<uint8>(EBlockType::Wood_Log));
 		if (Chunk->IsValidCoord(LocalX - 1, LocalY, TopZ))
-			Chunk->SetBlock(LocalX - 1, LocalY, TopZ, static_cast<uint8>(EBlockType::Wood_Log));
+			Chunk->SetBlockGenerated(LocalX - 1, LocalY, TopZ, static_cast<uint8>(EBlockType::Wood_Log));
 		if (Chunk->IsValidCoord(LocalX, LocalY + 1, TopZ + 1))
-			Chunk->SetBlock(LocalX, LocalY + 1, TopZ + 1, static_cast<uint8>(EBlockType::Wood_Log));
+			Chunk->SetBlockGenerated(LocalX, LocalY + 1, TopZ + 1, static_cast<uint8>(EBlockType::Wood_Log));
 	}
 }
 
@@ -101,7 +101,7 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 		{
 			if (Chunk->IsValidCoord(X, Y, SurfaceZ))
 			{
-				Chunk->SetBlock(X, Y, SurfaceZ, static_cast<uint8>(EBlockType::Cobblestone));
+				Chunk->SetBlockGenerated(X, Y, SurfaceZ, static_cast<uint8>(EBlockType::Cobblestone));
 			}
 		}
 	}
@@ -123,7 +123,7 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 				{
 					if (Chunk->IsValidCoord(X, Y, Z))
 					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Wood_Log));
+						Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Wood_Log));
 					}
 				}
 				else if (bIsWall)
@@ -133,7 +133,7 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 					{
 						if (Chunk->IsValidCoord(X, Y, Z))
 						{
-							Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Air));
+							Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Air));
 						}
 					}
 					// Glass Windows at H == 2 on East and West walls
@@ -141,7 +141,7 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 					{
 						if (Chunk->IsValidCoord(X, Y, Z))
 						{
-							Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Glass));
+							Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Glass));
 						}
 					}
 					else
@@ -149,7 +149,7 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 						// Wood Planks wall
 						if (Chunk->IsValidCoord(X, Y, Z))
 						{
-							Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Wood_Planks));
+							Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Wood_Planks));
 						}
 					}
 				}
@@ -158,7 +158,7 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 					// Hollow Interior Air
 					if (Chunk->IsValidCoord(X, Y, Z))
 					{
-						Chunk->SetBlock(X, Y, Z, static_cast<uint8>(EBlockType::Air));
+						Chunk->SetBlockGenerated(X, Y, Z, static_cast<uint8>(EBlockType::Air));
 					}
 				}
 			}
@@ -175,7 +175,7 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 			{
 				if (Chunk->IsValidCoord(X, Y, RoofZ))
 				{
-					Chunk->SetBlock(X, Y, RoofZ, static_cast<uint8>(EBlockType::Cobblestone));
+					Chunk->SetBlockGenerated(X, Y, RoofZ, static_cast<uint8>(EBlockType::Cobblestone));
 				}
 			}
 		}
@@ -185,17 +185,17 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 	const int32 FloorZ = SurfaceZ + 1;
 	if (Chunk->IsValidCoord(MinX + 1, MaxY - 1, FloorZ))
 	{
-		Chunk->SetBlock(MinX + 1, MaxY - 1, FloorZ, static_cast<uint8>(EBlockType::Crafting_Table));
+		Chunk->SetBlockGenerated(MinX + 1, MaxY - 1, FloorZ, static_cast<uint8>(EBlockType::Crafting_Table));
 	}
 	if (Chunk->IsValidCoord(MaxX - 1, MaxY - 1, FloorZ))
 	{
 		// 0 = North, 1 = East, 2 = South, 3 = West
-		Chunk->SetBlockWithMeta(MaxX - 1, MaxY - 1, FloorZ, static_cast<uint8>(EBlockType::Furnace), 3);
+		Chunk->SetBlockWithMetaGenerated(MaxX - 1, MaxY - 1, FloorZ, static_cast<uint8>(EBlockType::Furnace), 3);
 	}
 	// Torch placed directly on the floor
 	if (Chunk->IsValidCoord(CenterX, CenterY, FloorZ))
 	{
-		Chunk->SetBlock(CenterX, CenterY, FloorZ, static_cast<uint8>(EBlockType::Torch));
+		Chunk->SetBlockGenerated(CenterX, CenterY, FloorZ, static_cast<uint8>(EBlockType::Torch));
 	}
 
 	// 5. Cobblestone walkway outside the door
@@ -204,7 +204,7 @@ void FVoxelStructureGenerator::GenerateVillageHouse(
 		const int32 PathY = MinY - Step;
 		if (Chunk->IsValidCoord(CenterX, PathY, SurfaceZ))
 		{
-			Chunk->SetBlock(CenterX, PathY, SurfaceZ, static_cast<uint8>(EBlockType::Cobblestone));
+			Chunk->SetBlockGenerated(CenterX, PathY, SurfaceZ, static_cast<uint8>(EBlockType::Cobblestone));
 		}
 	}
 }

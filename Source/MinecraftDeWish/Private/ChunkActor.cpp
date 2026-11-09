@@ -86,6 +86,14 @@ void AChunkActor::SetBlock(int32 X, int32 Y, int32 Z, uint8 BlockID)
 	}
 }
 
+void AChunkActor::SetBlockGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID)
+{
+	if (IsValidCoord(X, Y, Z))
+	{
+		BlockData[GetBlockIndex(X, Y, Z)] = BlockID;
+	}
+}
+
 bool AChunkActor::ShouldRenderFace(uint8 CurrentBlockID, int32 NeighborX, int32 NeighborY, int32 NeighborZ) const
 {
 	// Vertical boundary checks
@@ -167,6 +175,24 @@ void AChunkActor::SetBlockWithMeta(int32 X, int32 Y, int32 Z, uint8 BlockID, uin
 		}
 
 		bIsModified = true;
+	}
+}
+
+void AChunkActor::SetBlockWithMetaGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID, uint8 MetaRotation)
+{
+	if (IsValidCoord(X, Y, Z))
+	{
+		const int32 Index = GetBlockIndex(X, Y, Z);
+		BlockData[Index] = BlockID;
+
+		if (MetaRotation > 0)
+		{
+			BlockMetadata.Add(Index, MetaRotation);
+		}
+		else
+		{
+			BlockMetadata.Remove(Index);
+		}
 	}
 }
 
@@ -358,11 +384,12 @@ void AChunkActor::AddFace(
 		MeshData.UV0.Add(FVector2D(0.0f, 0.0f));
 	}
 
-	// Natural terrain blocks receive the world-space tiling-breakup mask (vertex color G)
-	const bool bIsNaturalTerrain = WorldGenerator.IsValid() && WorldGenerator->IsNaturalTerrainBlock(BlockID);
-
-	// 1.0f = Blend Noise, 0.0f = No Blending
-	const float BlendMask = bIsNaturalTerrain ? 1.0f : 0.0f;
+	// Foliage wind flag (vertex color G): M_Global's WorldPositionOffset only moves
+	// vertices whose G is 1, so leaves sway and every other block stays put.
+	// G used to carry the world-space tiling-breakup mask, but no material node ever
+	// sampled it (the breakup moved to the stochastic UV jitter below), so the channel
+	// was free. Torches, item pickups and destruction particles all write G = 0.
+	const float WindWeight = (BlockID == static_cast<uint8>(EBlockType::Leaves)) ? 1.0f : 0.0f;
 
 	// UV1.X stores the primary Texture2DArray slice index.
 	// UV1.Y stores the secondary (biome neighbour) slice index used for cross-fading tops.
@@ -373,7 +400,7 @@ void AChunkActor::AddFace(
 	MeshData.UV1.Add(FVector2D(TexSlice, SecondaryTexSlice));
 	MeshData.UV1.Add(FVector2D(TexSlice, SecondaryTexSlice));
 
-	// R = slice index, G = tiling-breakup mask, B = biome blend weight, A = 1
+	// R = slice index, G = foliage wind flag, B = biome blend weight, A = 1
 	// Top faces receive per-corner weights so the cross-fade interpolates across the quad
 	// instead of banding at block boundaries.
 	// The mesh sections are created with bSRGBConversion=true so the material's VertexColor
@@ -389,7 +416,7 @@ void AChunkActor::AddFace(
 
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
-		MeshData.VertexColors.Add(FLinearColor(TexSlice, BlendMask, FMath::Clamp(VertexWeights[Index], 0.0f, 1.0f), 1.0f));
+		MeshData.VertexColors.Add(FLinearColor(TexSlice, WindWeight, FMath::Clamp(VertexWeights[Index], 0.0f, 1.0f), 1.0f));
 	}
 }
 
@@ -994,7 +1021,7 @@ uint8 AChunkActor::GetTargetedBlockID() const
 	FIntVector TargetCoord = LastTargetedVoxelCoord;
 
 	uint8 BlockID = 0;
-	if (WorldGenerator.IsValid() && TargetCoord.X >= 0)
+	if (WorldGenerator.IsValid() && bHasTargetedVoxel)
 	{
 		WorldGenerator->GetVoxelAt(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, BlockID);
 	}
@@ -1065,15 +1092,21 @@ FName AChunkActor::GetTargetedBlockRowName() const
 void AChunkActor::BreakTargetedBlock()
 {
 	FIntVector TargetCoord = LastTargetedVoxelCoord;
+	bool bHasTarget = bHasTargetedVoxel;
 
 	uint8 BlockAtCoord = 0;
-	if (WorldGenerator.IsValid() && TargetCoord.X >= 0)
+	if (WorldGenerator.IsValid() && bHasTarget)
 	{
 		WorldGenerator->GetVoxelAt(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, BlockAtCoord);
+		if (BlockAtCoord == 0)
+		{
+			// Cached voxel is gone (already broken or chunk remeshed): re-resolve it below.
+			bHasTarget = false;
+		}
 	}
 
 	// If not cached or pointing to Air, live raycast from camera
-	if (BlockAtCoord == 0 && WorldGenerator.IsValid())
+	if (!bHasTarget && WorldGenerator.IsValid())
 	{
 		APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
 		if (PC && PC->PlayerCameraManager)
@@ -1090,15 +1123,17 @@ void AChunkActor::BreakTargetedBlock()
 				WorldGenerator->WorldLocationToVoxelCoord(SamplePos, BX, BY, BZ);
 				TargetCoord = FIntVector(BX, BY, BZ);
 				WorldGenerator->GetVoxelAt(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, BlockAtCoord);
+				bHasTarget = true;
 			}
 		}
 	}
 
-	if (WorldGenerator.IsValid() && TargetCoord.X >= 0 && BlockAtCoord != 0 && BlockAtCoord != static_cast<uint8>(EBlockType::Bedrock))
+	if (WorldGenerator.IsValid() && bHasTarget && BlockAtCoord != 0 && BlockAtCoord != static_cast<uint8>(EBlockType::Bedrock))
 	{
 		uint8 DroppedID = 0;
 		WorldGenerator->BreakBlockAtVoxel(TargetCoord.X, TargetCoord.Y, TargetCoord.Z, DroppedID);
 		LastTargetedVoxelCoord = FIntVector(-1, -1, -1);
+		bHasTargetedVoxel = false;
 	}
 }
 

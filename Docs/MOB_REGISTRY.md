@@ -4,6 +4,21 @@ This document defines hostile creature statistics, artificial intelligence state
 
 ---
 
+## Item drops are block proxies
+
+There is **no item registry yet**: every pickup in the game is a block ID. Loot tables
+therefore borrow the nearest block as a stand-in, which is a known design debt, not a
+feature. The table below records what the code actually drops today.
+
+| Mob | Intended drop | Actual drop (block ID) | Status |
+|---|---|---|---|
+| Zombie | Rotten flesh | `BlockID 1` (Dirt) | Placeholder |
+| Zombie (rare) | Iron | `BlockID 7` (Iron Ore) | Placeholder |
+| Skeleton | Bone, Arrow | `BlockID 1` (Dirt) | Placeholder |
+| Spider | String, Spider Eye | `BlockID 17` (Leaves) | Placeholder — Spider Eye has no block at all |
+
+---
+
 ## Mob Roster
 
 ### 1. Zombie (`EMobType::Zombie`)
@@ -20,9 +35,9 @@ The classic undead melee aggressor.
   - Specular Map: `/Game/Patrix_Texture_Pack/textures/entity/zombie/zombie_s.zombie_s`
 - **Special Behaviors**:
   - `bBurnsInSunlight = true`: Ignites and loses 1 HP/s when under open sky during daytime.
-- **Loot Table**:
-  - `BlockID 1 (Dirt / Flesh)`: 1–2 items (100% chance)
-  - `BlockID 7 (Iron Ore)`: 1 item (5% rare chance)
+- **Loot Table** (block proxies — see the note above):
+  - `BlockID 1` (Dirt) stands in for Rotten Flesh: 1–2 items (100% chance)
+  - `BlockID 7` (Iron Ore): 1 item (5% rare chance)
 - **Experience Drop**: 5 XP
 
 ---
@@ -41,8 +56,8 @@ Ranged undead marksman.
   - Specular Map: `/Game/Patrix_Texture_Pack/textures/entity/skeleton/skeleton_s.skeleton_s`
 - **Special Behaviors**:
   - `bBurnsInSunlight = true`: Ignites in daylight when exposed to sky.
-- **Loot Table**:
-  - `BlockID 1 (Bone / Arrow drop)`: 1–2 items (100% chance)
+- **Loot Table** (block proxies — see the note above):
+  - `BlockID 1` (Dirt) stands in for Bone / Arrow: 1–2 items (100% chance)
 - **Experience Drop**: 5 XP
 
 ---
@@ -63,8 +78,9 @@ Agile, low-profile arachnid with wall climbing capabilities.
 - **Special Behaviors**:
   - `bCanClimbWalls = true`: When forward motion is blocked by a voxel wall, immediately adds vertical climbing velocity ($0.7 \times \text{MoveSpeed} = 210$ cm/s) to scale over blocks and pursue the player.
   - `bBurnsInSunlight = false`: Does not burn during daytime.
-- **Loot Table**:
-  - `BlockID 17 (String / Web proxy)`: 1–2 items (100% chance)
+- **Loot Table** (block proxies — see the note above):
+  - `BlockID 17` (Leaves) stands in for String / Web: 1–2 items (100% chance)
+  - Spider Eye: intended, but no block or item ID exists yet
 - **Experience Drop**: 5 XP
 
 ---

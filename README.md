@@ -1,12 +1,23 @@
 # MinecraftDeWish
 
-A high-performance C++ Minecraft-style voxel sandbox built on Unreal Engine 5.
+A post-apocalyptic voxel survival game built on Unreal Engine 5 — a Minecraft-like
+sandbox whose world is haunted by the Weeping Angels.
+
+> **Status.** The repository currently contains the **sandbox foundation** (terrain,
+> mining, crafting, mobs, vitals, PBR rendering). The Weeping Angels, the three-phase
+> progression and the automation end-game are **designed but not implemented**. See
+> `design/gdd/` for the target design and `Docs/` for what exists today.
 
 ---
 
 ## 🌟 Overview
 
 **MinecraftDeWish** is a voxel engine featuring infinite procedural terrain generation, asynchronous chunk streaming, multi-tier tool progression, a dedicated **Baubles equipment system**, physical 3D item pickups with parabolic launch dropping, full **Patrix 32×32 PBR graphics** (Normal & Specular maps), dynamic quickslot opacity, daytime/nighttime environmental cycles, hostile mob AI with spider wall climbing and creeper explosions, and player vitals with XP progression.
+
+The **target game** wraps that sandbox in a horror survival loop: you never sleep, you
+carry your light with you, and the Angels can only move when they are unobserved and the
+place is dark. Progress means delegating your gaze — torches, then fixed lighting, then
+cameras on generators.
 
 ---
 
@@ -37,9 +48,11 @@ A high-performance C++ Minecraft-style voxel sandbox built on Unreal Engine 5.
 
 ### 5. Inventory, QuickSlots & Item Drop Mechanics
 - **Dynamic QuickSlot Opacity**: Automatically toggles slot visibility in `WB_QuickSlots` (`opacity = 1.0` and `Visible` when filled; `opacity = 0.0` and `Hidden` when empty).
-- **Contextual Drop Action (`IA_DropItem` / Q)**:
+- **Contextual Drop Action (`IA_DropItem` / `A`)**:
   - Drops selected quickslot item during regular gameplay.
-  - Drops mouse-hovered item when inside an inventory or container panel (chests, crates, barrels, backpacks).
+  - Drops the hovered inventory-slot item when an inventory panel is open. Container
+    panels (chests, crates, barrels, backpacks) are **not implemented** — only the
+    hover tracking and the inventory grid exist.
 - **3D Physics Launch**: Items are launched forward 2.5 blocks (250 cm) with gravity, drag, and floor sweep collision.
 - **Pickup Cooldown**: 1.2s delay prevents instant re-absorption while items are airborne.
 
@@ -52,7 +65,7 @@ A high-performance C++ Minecraft-style voxel sandbox built on Unreal Engine 5.
 - **Day/Night Cycle**: 20-minute continuous cycle (10 min day, 10 min night) with sun rotation and sky light modulation.
 - **Hostile Mobs**:
   - **Zombie**: Melee pursuer, burns under direct daylight.
-  - **Skeleton**: Ranged pursuer, burns under daylight, drops bones & arrows.
+  - **Skeleton**: Ranged pursuer, burns under daylight, drops bone/arrow **block proxies** (no item registry yet — see `Docs/MOB_REGISTRY.md`).
   - **Spider**: Aggressive climber that scales vertical voxel walls to reach players.
   - **Creeper**: Silent stalker with fuse hiss countdown, detonating to damage players and carve craters out of the voxel terrain.
 - **Spawner System**: Dark-area-only spawning (light level < 7), torch avoidance, player distance rings (24m - 128m), and despawning.
@@ -65,13 +78,22 @@ A high-performance C++ Minecraft-style voxel sandbox built on Unreal Engine 5.
 
 ## 📂 Documentation Directory
 
+`Docs/` holds the **current reference documentation**: what the code does today. It is
+being progressively superseded by `design/`, which holds the **target design** (game
+concept, per-system GDDs, levels, balance).
+
 | Document | Description |
 |---|---|
-| [GAME_DESIGN.md](Docs/GAME_DESIGN.md) | High-level game design, mechanics, formulas, and player loop |
-| [SYSTEMS_REFERENCE.md](Docs/SYSTEMS_REFERENCE.md) | Comprehensive C++ subsystem API and architecture guide |
-| [BLOCK_REGISTRY.md](Docs/BLOCK_REGISTRY.md) | Block IDs, textures, hardness, tool affinities, and properties |
-| [MOB_REGISTRY.md](Docs/MOB_REGISTRY.md) | Mob stats, AI state machines, drop tables, and special behaviors |
-| [TOOL_REGISTRY.md](Docs/TOOL_REGISTRY.md) | Tool tiers, durabilities, mining multipliers, and combat damage |
+| [Docs/GAME_DESIGN.md](Docs/GAME_DESIGN.md) | **Obsolete** — v0.1 sandbox mechanics inventory, kept for history |
+| [Docs/SYSTEMS_REFERENCE.md](Docs/SYSTEMS_REFERENCE.md) | C++ subsystem API, class hierarchy, delegates, integration |
+| [Docs/BLOCK_REGISTRY.md](Docs/BLOCK_REGISTRY.md) | Block IDs, textures, hardness, tool affinities, implementation limits |
+| [Docs/MOB_REGISTRY.md](Docs/MOB_REGISTRY.md) | Mob stats, AI state machines, loot (block proxies) |
+| [Docs/TOOL_REGISTRY.md](Docs/TOOL_REGISTRY.md) | Tool tiers, durabilities, mining multipliers, combat damage |
+| [RELEASE_v0.2.0-alpha.md](RELEASE_v0.2.0-alpha.md) | Archived v0.2 release notes (biome blending, atmosphere, debris) |
+| [PRE_RELEASE.md](PRE_RELEASE.md) | Archived v0.1 release notes |
+| [design/](design/README.md) | Target design: `gdd/`, `narrative/`, `levels/`, `balance/` |
+| [production/](production/README.md) | Sprints, milestones, releases, audits |
+| [Docs/engine-reference/](Docs/engine-reference/) | Version-pinned Unreal API notes (5.7 snapshot; verify 5.8 against official docs) |
 
 ---
 
