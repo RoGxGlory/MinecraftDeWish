@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    ".opencode/docs/technical-preferences.md",
+    ".opencode/docs/coding-standards.md",
+    ".opencode/docs/coordination-rules.md",
+    ".opencode/docs/context-management.md",
+    ".opencode/rules/ue-cpp.md",
+    ".opencode/rules/ue-blueprint.md",
+    ".opencode/rules/ue-ui.md",
+    ".opencode/rules/ue-network.md",
+    ".opencode/rules/ue-data.md",
+    ".opencode/rules/design-docs.md",
+    ".opencode/rules/test-standards.md"
+  ]
+}

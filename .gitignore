@@ -83,3 +83,8 @@ walkthrough.md
 .aider*
 Automation_MinecraftDeWish.slnx
 MinecraftDeWish.slnx
+
+# OpenCode Game Studio ephemeral state
+production/session-state/
+production/session-logs/
+
