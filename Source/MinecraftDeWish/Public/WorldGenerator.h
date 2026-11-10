@@ -471,11 +471,19 @@ public:
 	 * Bridge called by the mining Blueprint (BP_HorrorCharacter) during block-breaking.
 	 * Spawns (or reuses) a vanilla-style crack overlay at the given voxel and advances it
 	 * to the stage matching Progress01 (0..1). The Blueprint owns the progress source of truth.
+	 *
+	 * Only one voxel is mined at a time, so any overlay left on another voxel is destroyed here.
 	 * @param VoxelCoord Global voxel position of the targeted block.
 	 * @param Progress01 Accumulated break time / total time needed, 0..1.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Mining|Crack")
 	void UpdateCrackMining(const FIntVector& VoxelCoord, float Progress01);
+
+	/**
+	 * Single-active-overlay rule: the overlay of ActiveVoxel survives, every other one is stale
+	 * (the player changed target without releasing the input). Pure so it can be unit-tested.
+	 */
+	static bool ShouldKeepCrackOverlay(const FIntVector& OverlayVoxel, const FIntVector& ActiveVoxel);
 
 	/** Destroys all current crack mining overlays (block broke, mining was cancelled, target lost). */
 	UFUNCTION(BlueprintCallable, Category = "Mining|Crack")

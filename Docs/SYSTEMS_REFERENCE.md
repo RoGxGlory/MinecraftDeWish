@@ -57,7 +57,7 @@ Core coordinator actor placed in the world.
   - `const FVoxelFrameStats& GetLastFrameStats() const`: Streaming cost measured during the previous tick (streaming / generation / mesh / remesh milliseconds plus chunk counters). Diagnostic only.
   - `int32 GetActiveChunkCount() const`, `int32 GetPendingGenerationCount() const`, `int32 GetPendingRemeshCount() const`: Streaming queue depths for diagnostics and the benchmark.
   - `void SetBlockGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID)` / `void SetBlockWithMetaGenerated(...)` on `AChunkActor`: world-generation writes that do not flag the chunk as modified (see ADR-0002).
-  - `void UpdateCrackMining(const FIntVector& VoxelCoord, float Progress01)`: Blueprint-callable crack-overlay driver. Spawns the overlay for that voxel if needed and advances it to `GetStageFromProgress(Progress01)`. An invalid, air or Bedrock voxel destroys the overlay at that spot instead. See §14 and ADR-0003.
+  - `void UpdateCrackMining(const FIntVector& VoxelCoord, float Progress01)`: Blueprint-callable crack-overlay driver. Destroys overlays left on any other voxel, then spawns the overlay for that voxel if needed and advances it to `GetStageFromProgress(Progress01)`. An invalid, air or Bedrock voxel destroys the overlay at that spot instead. See §14 and ADR-0003.
   - `void ClearCrackMining()`: Destroys every live `ABlockCrackActor`. Called when mining is cancelled.
   - `float GetBlockBreakTimeAtVoxel(const FIntVector& VoxelCoord, float MiningForce = 0.0f) const`: `BlueprintPure`. Break time in seconds from the `Durability` column of `Block_DataTable`, using the same formula as the break test. Blueprint divides `BreakTime` by this value to obtain `Progress01`.
 - **Settings**:
@@ -378,9 +378,10 @@ are recorded in ADR-0003.
     tick re-targets the block below.
   - `UpdateCrackMining` with an invalid voxel, air, or **Bedrock** destroys the overlay at that
     spot instead of drawing on it.
-  - Overlays are keyed **per voxel** in `BlockCrackOverlays` (`TMap<FIntVector, TWeakObjectPtr<ABlockCrackActor>>`).
-    Mining voxel A then voxel B without releasing leaves A's overlay alive until `ClearCrackMining`
-    or A breaks — the intended one-overlay-at-a-time behaviour relies on the release path.
+  - Overlays are keyed **per voxel** in `BlockCrackOverlays` (`TMap<FIntVector, TWeakObjectPtr<ABlockCrackActor>>`),
+    but only one may be alive: every `UpdateCrackMining` first destroys the overlays of all other
+    voxels (`ShouldKeepCrackOverlay`). Changing target without releasing therefore moves the overlay
+    instead of stacking a second one.
   - `OnCrackStageChanged(VoxelCoord, Stage)` is broadcast only on a stage transition, so HUD or
     debug consumers do not need to poll.
 - **Tunables**:

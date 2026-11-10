@@ -2061,8 +2061,30 @@ ABlockCrackActor* AWorldGenerator::SpawnOrGetCrackOverlay(const FIntVector& Voxe
 	return Overlay;
 }
 
+bool AWorldGenerator::ShouldKeepCrackOverlay(const FIntVector& OverlayVoxel, const FIntVector& ActiveVoxel)
+{
+	// One block is mined at a time (BP_HorrorCharacter reports a single target per tick), so an
+	// overlay on any other voxel belongs to a target the player has already looked away from.
+	return OverlayVoxel == ActiveVoxel;
+}
+
 void AWorldGenerator::UpdateCrackMining(const FIntVector& VoxelCoord, const float Progress01)
 {
+	// Drop overlays left on other voxels so switching target mid-hold does not stack cracks.
+	for (auto It = BlockCrackOverlays.CreateIterator(); It; ++It)
+	{
+		if (ShouldKeepCrackOverlay(It.Key(), VoxelCoord))
+		{
+			continue;
+		}
+
+		if (ABlockCrackActor* Stale = It.Value().Get())
+		{
+			Stale->DestroyCrackOverlay();
+		}
+		It.RemoveCurrent();
+	}
+
 	uint8 BlockID = static_cast<uint8>(EBlockType::Air);
 	if (!GetVoxelAt(VoxelCoord.X, VoxelCoord.Y, VoxelCoord.Z, BlockID)
 		|| BlockID == static_cast<uint8>(EBlockType::Air)

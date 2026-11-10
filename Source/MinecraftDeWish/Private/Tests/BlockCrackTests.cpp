@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "BlockCrackActor.h"
+#include "WorldGenerator.h"
 
 /**
  * Pins down the vanilla-equivalent cracking progression: mining progress (0..1) maps onto
@@ -25,6 +26,35 @@ bool FBlockCrackStageProgressionTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("exactly 1.0 progress clamps to stage 9, never stage 10"), ABlockCrackActor::GetStageFromProgress(1.0f), 9);
 	TestEqual(TEXT("progress above 1.0 clamps to stage 9"), ABlockCrackActor::GetStageFromProgress(1.5f), 9);
 	TestEqual(TEXT("negative progress clamps to stage 0"), ABlockCrackActor::GetStageFromProgress(-0.5f), 0);
+
+	return true;
+}
+
+/**
+ * Regression guard for overlay stacking: overlays are keyed per voxel, so mining voxel A then
+ * voxel B without releasing the input used to leave A's overlay alive until ClearCrackMining ran.
+ * The rule is now that only the actively mined voxel keeps an overlay.
+ */
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBlockCrackSingleActiveOverlayTest,
+	"MinecraftDeWish.Mining.KeepsOverlayOnlyOnActiveVoxel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBlockCrackSingleActiveOverlayTest::RunTest(const FString& Parameters)
+{
+	const FIntVector Active(10, -4, 27);
+
+	TestTrue(TEXT("the overlay of the mined voxel survives its own update"),
+		AWorldGenerator::ShouldKeepCrackOverlay(Active, Active));
+
+	TestFalse(TEXT("an overlay left on the previously mined voxel is destroyed"),
+		AWorldGenerator::ShouldKeepCrackOverlay(FIntVector(10, -4, 26), Active));
+
+	TestFalse(TEXT("a horizontally adjacent overlay is not kept"),
+		AWorldGenerator::ShouldKeepCrackOverlay(FIntVector(11, -4, 27), Active));
+
+	TestTrue(TEXT("negative coordinates still compare exactly"),
+		AWorldGenerator::ShouldKeepCrackOverlay(FIntVector(-30, -28, 28), FIntVector(-30, -28, 28)));
 
 	return true;
 }
