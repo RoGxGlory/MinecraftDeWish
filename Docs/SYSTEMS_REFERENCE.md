@@ -57,12 +57,16 @@ Core coordinator actor placed in the world.
   - `const FVoxelFrameStats& GetLastFrameStats() const`: Streaming cost measured during the previous tick (streaming / generation / mesh / remesh milliseconds plus chunk counters). Diagnostic only.
   - `int32 GetActiveChunkCount() const`, `int32 GetPendingGenerationCount() const`, `int32 GetPendingRemeshCount() const`: Streaming queue depths for diagnostics and the benchmark.
   - `void SetBlockGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID)` / `void SetBlockWithMetaGenerated(...)` on `AChunkActor`: world-generation writes that do not flag the chunk as modified (see ADR-0002).
+  - `void UpdateCrackMining(const FIntVector& VoxelCoord, float Progress01)`: Blueprint-callable crack-overlay driver. Spawns the overlay for that voxel if needed and advances it to `GetStageFromProgress(Progress01)`. An invalid, air or Bedrock voxel destroys the overlay at that spot instead. See §14 and ADR-0003.
+  - `void ClearCrackMining()`: Destroys every live `ABlockCrackActor`. Called when mining is cancelled.
+  - `float GetBlockBreakTimeAtVoxel(const FIntVector& VoxelCoord, float MiningForce = 0.0f) const`: `BlueprintPure`. Break time in seconds from the `Durability` column of `Block_DataTable`, using the same formula as the break test. Blueprint divides `BreakTime` by this value to obtain `Progress01`.
 - **Settings**:
   - `RenderDistance` (chunks, radius): default `8`, editable in the details panel, clamped 2–64. Restored from `GameUserSettings.ini` at `BeginPlay` before the first streaming pass; a missing entry falls back to the default.
   - `bFastLeaves`: default `true`. Player-facing leaf rendering preference; restored from `GameUserSettings.ini` at `BeginPlay` before the first generation pass. Stored only — it does not change the mesh today (see above).
 - **Delegates**:
   - `OnCraftingTableOpened`: Broadcast when player right-clicks a Crafting Table within 4 blocks.
   - `OnFurnaceOpened`: Broadcast when player right-clicks a Furnace within 4 blocks.
+  - `OnCrackStageChanged(FIntVector VoxelCoord, int32 Stage)`: Broadcast by `UpdateCrackMining` only when the displayed crack stage actually changes (see §14).
 
 ### 1.1 Voxel benchmark (`UVoxelBenchSubsystem`)
 
@@ -325,3 +329,64 @@ Normals_Blend -----------Lerp(B)-->            ^ (Alpha = VertexColor.B)
 `AChunkActor::bStochasticTopUVs` gives every isotropic top face a deterministic per-block UV phase offset (derived from the block's world position). The UVs are intentionally left outside `[0,1]` so the sampler's Wrap mode tiles them; applying `Frac` would collapse the quad onto a single texel.
 
 Tunables (`AWorldGenerator`): `BiomeBlendWidth` (fade half-width in **blocks**, default 4), `BiomeBlendNoise` (border interlock), `BiomeBlendWarp` (large-scale meander, blocks), `BiomeBlendStrength` (0 disables), `BiomeHeightRamp` (desert height-ramp half-width, field units).
+
+---
+
+### 14. `ABlockCrackActor` (`AActor`)
+
+Vanilla-style progressive crack overlay. While a block is being mined, one of the ten
+`destroy_stage_0..9` textures is drawn over its faces so the player sees the damage
+accumulate. It is **not** part of `AChaosBlockDestructionActor` (§5): the two systems share
+no code and the `destroy_stage_*` textures are used here only.
+
+**Progress source.** The actor holds no timer and no `Tick`. Blueprint owns mining state, so
+`BP_HorrorCharacter` computes the ratio and pushes it:
+
+```
+Progress01 = BreakTime / AWorldGenerator::GetBlockBreakTimeAtVoxel(LastTargetedBlockVoxel, Current_Mining_Force)
+```
+
+`GetBlockBreakTimeAtVoxel` reuses the break test's own formula (`UBaublesSystem::GetBestMiningForce`
+→ `GetToolMiningForce` → `UMiningQueueSystem::CalculateBreakTime` over the `Durability` column),
+so stage 9 lands on the same frame as the break instead of one frame later. Wiring and rationale
+are recorded in ADR-0003.
+
+- **Stage selection**: `GetStageFromProgress(Progress)` = `FloorToInt(Clamp(Progress, 0, 1) * 10)`,
+  clamped to `[0, 9]`. Texture parameter writes happen only when the index changes, so a
+  mining tick that stays in the same stage costs nothing.
+- **Geometry** (`UProceduralMeshComponent`, root, collision disabled, shadows off):
+  - Cube blocks: six per-face quads with 0..1 UVs, pushed `0.75 UU` outward along each face
+    normal to win the depth test against the chunk surface without z-fighting. All six faces are
+    generated; hidden faces are not culled because the overlay is a separate actor.
+  - Torches: two crossed vertical diagonal planes mirroring `AChunkActor::AddTorchMesh`, each
+    double-sided and offset `0.75 UU` along both normal directions. Local Z spans
+    `-0.5·S .. +0.3·S` and X/Y `±0.35·S`, so the overlay follows the torch shape instead of
+    drawing a cube around it.
+  - Actor location is the block centre: `(Voxel + 0.5) × BlockScale`, identical to the conversion
+    `AChunkActor` uses when it builds chunk meshes.
+- **Material**: a dynamic instance of `M_BlockCrack` (Masked / Unlit / TwoSided).
+  `OpacityMask = CrackTex.A`, `Emissive = CrackTex.RGB × 0.55`, `OpacityMaskClipValue = 0.15`.
+  The mask must come from the **alpha** channel: the source PNGs are near-greyscale in RGB
+  (measured max 126/162/176 for stages 1/4/9) while alpha is exactly 0 or 255 with a mean of
+  23.9/83.7/195.2. Deriving the mask from luminance — or from `OneMinus` — inverts the overlay.
+- **Lifecycle**:
+  - First mining tick → `AWorldGenerator::UpdateCrackMining` spawns the overlay.
+  - `IA_Break.Canceled|Completed` → `Clear and Invalidate Timer by Handle` →
+    `ClearCrackMining()` → every overlay destroyed. (`Event ResetBreakEvent` in
+    `BP_HorrorCharacter` is dead code — it is never invoked.)
+  - `BreakBlockAtVoxel` destroys the overlay of the voxel it turns to air, then the next mining
+    tick re-targets the block below.
+  - `UpdateCrackMining` with an invalid voxel, air, or **Bedrock** destroys the overlay at that
+    spot instead of drawing on it.
+  - Overlays are keyed **per voxel** in `BlockCrackOverlays` (`TMap<FIntVector, TWeakObjectPtr<ABlockCrackActor>>`).
+    Mining voxel A then voxel B without releasing leaves A's overlay alive until `ClearCrackMining`
+    or A breaks — the intended one-overlay-at-a-time behaviour relies on the release path.
+  - `OnCrackStageChanged(VoxelCoord, Stage)` is broadcast only on a stage transition, so HUD or
+    debug consumers do not need to poll.
+- **Tunables**:
+  - `StageTextures[0..9]` — resolved in the constructor from
+    `/Game/Patrix_Texture_Pack/textures/block/destroy_stage_<n>`; no other system hard-references them.
+  - `CrackMaterialTemplate` — `M_BlockCrack`, overridden per instance.
+  - Geometry offset — `const float Epsilon = 0.75f` in both mesh builders (compile-time, not a
+    property). Raise it if z-fighting appears at extreme view distances.
+  - `CurrentStage`, `VoxelCoord`, `BlockID` are `BlueprintReadOnly` for HUD/debug consumers.

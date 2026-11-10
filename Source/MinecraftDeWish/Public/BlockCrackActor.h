@@ -9,17 +9,21 @@
  * ABlockCrackActor
  *
  * Runtime overlay actor that draws vanilla-style block cracking on top of a voxel block being mined.
- * It mirrors a single FMiningTask from UMiningQueueSystem: Progress (0..1) maps onto the destroy_stage_0..9
- * crack textures via GetStageFromProgress.
+ * It is a pure function of mining progress: Progress (0..1) maps onto the destroy_stage_0..9 crack
+ * textures via GetStageFromProgress.
  *
- * The actor is event-driven: it has no Tick. AWorldGenerator pushes UpdateCrackStage(Progress) once per
- * frame for every active mining task and destroys the actor when the task leaves the active queue.
+ * The actor is event-driven: it has no Tick, and it does not read UMiningQueueSystem. Blueprint owns
+ * the mining state (BreakTime / LastTargetedBlockVoxel on BP_HorrorCharacter) and pushes progress
+ * through AWorldGenerator::UpdateCrackMining(Voxel, Progress01) while the block is mined, then
+ * AWorldGenerator::ClearCrackMining() on cancel. See ADR-0003.
  *
  * Supports every block shape the voxel renderer produces:
- *  - Cube blocks use per-face quads with a 0..1 UV mapping onto the crack texture.
- *  - Torches (crossed diagonal quads, mirroring AChunkActor::AddTorchMesh) get crossed-quad crack meshes
- *    offset along each quad normal by a sub-millimeter epsilon so the overlay wins the depth test from
- *    both viewing sides without z-fighting the torch itself.
+ *  - Cube blocks use six per-face quads with a 0..1 UV mapping onto the crack texture, offset
+ *    0.75 UU outward along each face normal so the overlay wins the depth test without z-fighting
+ *    the chunk surface.
+ *  - Torches (crossed diagonal quads, mirroring AChunkActor::AddTorchMesh) get double-sided
+ *    crossed-quad crack meshes offset 0.75 UU along each quad normal so the overlay wins the depth
+ *    test from both viewing sides without z-fighting the torch itself.
  */
 UCLASS()
 class MINECRAFTDEWISH_API ABlockCrackActor : public AActor

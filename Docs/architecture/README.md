@@ -12,6 +12,7 @@ Format: `adr-NNNN-short-slug.md`, four-digit, never renumbered. An ADR is immuta
 | --- | --- | --- | --- |
 | [0001](adr-0001-lumen-mandatory.md) | Lumen is mandatory on every quality level | Accepted | 2026-11-09 |
 | [0002](adr-0002-generated-vs-player-voxel-writes.md) | Generated voxel writes are not player edits | Accepted | 2026-11-09 |
+| [0003](adr-0003-block-crack-overlay-driver.md) | Block crack overlay is driven by the Blueprint mining timer | Accepted | 2026-11-10 |
 
 ## Strategy documents
 
