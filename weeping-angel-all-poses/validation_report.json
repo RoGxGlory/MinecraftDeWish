@@ -1,0 +1,225 @@
+{
+  "materials": [
+    {
+      "name": "M_WeepingAngel_Body",
+      "expressions": 4,
+      "inputs": {
+        "base_color": {
+          "class": "MaterialExpressionTextureSample",
+          "texture": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Body_D.T_WeepingAngel_Body_D",
+          "sampler_type": "<MaterialSamplerType.SAMPLERTYPE_COLOR: 0>"
+        },
+        "normal": {
+          "class": "MaterialExpressionTextureSample",
+          "texture": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Body_N.T_WeepingAngel_Body_N",
+          "sampler_type": "<MaterialSamplerType.SAMPLERTYPE_NORMAL: 3>"
+        },
+        "metallic": {
+          "class": "MaterialExpressionConstant",
+          "constant": 0.0
+        },
+        "roughness": {
+          "class": "MaterialExpressionConstant",
+          "constant": 0.8
+        }
+      }
+    },
+    {
+      "name": "M_WeepingAngel_Face",
+      "expressions": 4,
+      "inputs": {
+        "base_color": {
+          "class": "MaterialExpressionTextureSample",
+          "texture": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Face_D.T_WeepingAngel_Face_D",
+          "sampler_type": "<MaterialSamplerType.SAMPLERTYPE_COLOR: 0>"
+        },
+        "normal": {
+          "class": "MaterialExpressionTextureSample",
+          "texture": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Face_N.T_WeepingAngel_Face_N",
+          "sampler_type": "<MaterialSamplerType.SAMPLERTYPE_NORMAL: 3>"
+        },
+        "metallic": {
+          "class": "MaterialExpressionConstant",
+          "constant": 0.0
+        },
+        "roughness": {
+          "class": "MaterialExpressionConstant",
+          "constant": 0.8
+        }
+      }
+    },
+    {
+      "name": "M_WeepingAngel_Wings",
+      "expressions": 4,
+      "inputs": {
+        "base_color": {
+          "class": "MaterialExpressionTextureSample",
+          "texture": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Wings_D.T_WeepingAngel_Wings_D",
+          "sampler_type": "<MaterialSamplerType.SAMPLERTYPE_COLOR: 0>"
+        },
+        "normal": {
+          "class": "MaterialExpressionTextureSample",
+          "texture": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Wings_N.T_WeepingAngel_Wings_N",
+          "sampler_type": "<MaterialSamplerType.SAMPLERTYPE_NORMAL: 3>"
+        },
+        "metallic": {
+          "class": "MaterialExpressionConstant",
+          "constant": 0.0
+        },
+        "roughness": {
+          "class": "MaterialExpressionConstant",
+          "constant": 0.8
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "SM_WeepingAngel_Idle",
+      "size_cm": [
+        98.44,
+        78.78,
+        185.0
+      ],
+      "min_z_cm": -0.0,
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Body.M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Face.M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Wings.M_WeepingAngel_Wings"
+        }
+      ],
+      "lod_count": 1,
+      "nanite": false
+    },
+    {
+      "name": "SM_WeepingAngel_Attack",
+      "size_cm": [
+        97.58,
+        87.08,
+        185.0
+      ],
+      "min_z_cm": -0.0,
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Body.M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Face.M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Wings.M_WeepingAngel_Wings"
+        }
+      ],
+      "lod_count": 1,
+      "nanite": false
+    },
+    {
+      "name": "SM_WeepingAngel_Point",
+      "size_cm": [
+        97.58,
+        118.7,
+        185.0
+      ],
+      "min_z_cm": -0.0,
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Body.M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Face.M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings",
+          "material_path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Wings.M_WeepingAngel_Wings"
+        }
+      ],
+      "lod_count": 1,
+      "nanite": false
+    }
+  ],
+  "textures": [
+    {
+      "name": "T_WeepingAngel_Body_D",
+      "compression": "<TextureCompressionSettings.TC_DEFAULT: 0>",
+      "srgb": true,
+      "size": [
+        1024,
+        1024
+      ],
+      "flip_green": false
+    },
+    {
+      "name": "T_WeepingAngel_Body_N",
+      "compression": "<TextureCompressionSettings.TC_NORMALMAP: 1>",
+      "srgb": false,
+      "size": [
+        1024,
+        1024
+      ],
+      "flip_green": false
+    },
+    {
+      "name": "T_WeepingAngel_Face_D",
+      "compression": "<TextureCompressionSettings.TC_DEFAULT: 0>",
+      "srgb": true,
+      "size": [
+        1024,
+        1024
+      ],
+      "flip_green": false
+    },
+    {
+      "name": "T_WeepingAngel_Face_N",
+      "compression": "<TextureCompressionSettings.TC_NORMALMAP: 1>",
+      "srgb": false,
+      "size": [
+        1024,
+        1024
+      ],
+      "flip_green": false
+    },
+    {
+      "name": "T_WeepingAngel_Wings_D",
+      "compression": "<TextureCompressionSettings.TC_DEFAULT: 0>",
+      "srgb": true,
+      "size": [
+        1024,
+        1024
+      ],
+      "flip_green": false
+    },
+    {
+      "name": "T_WeepingAngel_Wings_N",
+      "compression": "<TextureCompressionSettings.TC_NORMALMAP: 1>",
+      "srgb": false,
+      "size": [
+        1024,
+        1024
+      ],
+      "flip_green": false
+    }
+  ],
+  "errors": []
+}

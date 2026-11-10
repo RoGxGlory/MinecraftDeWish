@@ -49,6 +49,17 @@ def try_set(obj, names, value):
     return None
 
 
+def enum_member(enum_class, fragment):
+    """Return the first enum member whose Python name contains `fragment`."""
+    for name in dir(enum_class):
+        if fragment in name.upper():
+            try:
+                return getattr(enum_class, name)
+            except Exception:
+                pass
+    return None
+
+
 def save(asset):
     path = asset.get_path_name().split(".")[0]
     ok = unreal.EditorAssetLibrary.save_loaded_asset(asset, False)
@@ -197,13 +208,18 @@ def import_mesh(fbx_name, dest_name):
     import_ui.set_editor_property("import_materials", False)
     import_ui.set_editor_property("import_textures", False)
     import_ui.set_editor_property("import_animations", False)
-    import_ui.set_editor_property("mesh_type_to_import", unreal.FBXImportType.FBXIT_STATIC_MESH)
+
+    static_mesh_type = enum_member(unreal.FBXImportType, "STATIC")
+    if static_mesh_type is not None:
+        try_set(import_ui, ["mesh_type_to_import"], static_mesh_type)
 
     static_data = unreal.FbxStaticMeshImportData()
     try_set(static_data, ["convert_scene"], True)
     try_set(static_data, ["convert_scene_unit"], True)
     try_set(static_data, ["combine_meshes"], False)
-    try_set(static_data, ["normal_import_method"], unreal.FBXNormalImportMethod.FBXNIM_COMPUTE)
+    normal_method = enum_member(unreal.FBXNormalImportMethod, "COMPUTE")
+    if normal_method is not None:
+        try_set(static_data, ["normal_import_method"], normal_method)
     import_ui.set_editor_property("static_mesh_import_data", static_data)
 
     task = unreal.AssetImportTask()

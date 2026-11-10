@@ -1,0 +1,165 @@
+{
+  "textures": [
+    {
+      "name": "T_WeepingAngel_Body_D",
+      "path": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Body_D",
+      "import_file": "angelbody.png",
+      "compression_settings": "<TextureCompressionSettings.TC_DEFAULT: 0>",
+      "srgb": true
+    },
+    {
+      "name": "T_WeepingAngel_Face_D",
+      "path": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Face_D",
+      "import_file": "angelface.png",
+      "compression_settings": "<TextureCompressionSettings.TC_DEFAULT: 0>",
+      "srgb": true
+    },
+    {
+      "name": "T_WeepingAngel_Wings_D",
+      "path": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Wings_D",
+      "import_file": "angelwings.png",
+      "compression_settings": "<TextureCompressionSettings.TC_DEFAULT: 0>",
+      "srgb": true
+    },
+    {
+      "name": "T_WeepingAngel_Body_N",
+      "path": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Body_N",
+      "import_file": "angelbody_nrm.png",
+      "compression_settings": "<TextureCompressionSettings.TC_NORMALMAP: 1>",
+      "srgb": false
+    },
+    {
+      "name": "T_WeepingAngel_Face_N",
+      "path": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Face_N",
+      "import_file": "angelface_nrm.png",
+      "compression_settings": "<TextureCompressionSettings.TC_NORMALMAP: 1>",
+      "srgb": false
+    },
+    {
+      "name": "T_WeepingAngel_Wings_N",
+      "path": "/Game/Characters/WeepingAngel/Textures/T_WeepingAngel_Wings_N",
+      "import_file": "angelwings_nrm.png",
+      "compression_settings": "<TextureCompressionSettings.TC_NORMALMAP: 1>",
+      "srgb": false
+    }
+  ],
+  "materials": [
+    {
+      "name": "M_WeepingAngel_Body",
+      "path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Body"
+    },
+    {
+      "name": "M_WeepingAngel_Face",
+      "path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Face"
+    },
+    {
+      "name": "M_WeepingAngel_Wings",
+      "path": "/Game/Characters/WeepingAngel/Materials/M_WeepingAngel_Wings"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "SM_WeepingAngel_Idle",
+      "path": "/Game/Characters/WeepingAngel/Meshes/SM_WeepingAngel_Idle",
+      "import_file": "SM_WeepingAngel_Idle.fbx",
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings"
+        }
+      ],
+      "size_cm": [
+        98.44,
+        78.78,
+        185.0
+      ],
+      "min": [
+        -49.22,
+        -39.39,
+        -0.0
+      ],
+      "max": [
+        49.22,
+        39.39,
+        185.0
+      ]
+    },
+    {
+      "name": "SM_WeepingAngel_Attack",
+      "path": "/Game/Characters/WeepingAngel/Meshes/SM_WeepingAngel_Attack",
+      "import_file": "SM_WeepingAngel_Attack.fbx",
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings"
+        }
+      ],
+      "size_cm": [
+        97.58,
+        87.08,
+        185.0
+      ],
+      "min": [
+        -48.79,
+        -43.54,
+        -0.0
+      ],
+      "max": [
+        48.79,
+        43.54,
+        185.0
+      ]
+    },
+    {
+      "name": "SM_WeepingAngel_Point",
+      "path": "/Game/Characters/WeepingAngel/Meshes/SM_WeepingAngel_Point",
+      "import_file": "SM_WeepingAngel_Point.fbx",
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings"
+        }
+      ],
+      "size_cm": [
+        97.58,
+        118.7,
+        185.0
+      ],
+      "min": [
+        -48.79,
+        -59.35,
+        -0.0
+      ],
+      "max": [
+        48.79,
+        59.35,
+        185.0
+      ]
+    }
+  ],
+  "errors": []
+}

@@ -16,6 +16,8 @@
 #include "Serialization/MemoryReader.h"
 #include "BaublesSystem.h"
 #include "QuickSlotsInventorySystem.h"
+#include "UI/WorldDescriptorSubsystem.h"
+#include "UI/GameSettingsSubsystem.h"
 #include "EnhancedInputComponent.h"
 #include "InputAction.h"
 #include "UObject/ConstructorHelpers.h"
@@ -76,6 +78,19 @@ AWorldGenerator::AWorldGenerator()
 void AWorldGenerator::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// A world launched from the title screen carries its descriptor in the game instance.
+	// Consume it before Noise.SetSeed() and before the save path is derived from the seed.
+	if (UWorldDescriptorSubsystem* Descriptors = UWorldDescriptorSubsystem::Get(this))
+	{
+		if (Descriptors->HasPendingWorld())
+		{
+			const FWorldDescriptor Descriptor = Descriptors->ConsumePendingWorld();
+			WorldSeed = Descriptor.Seed;
+			UE_LOG(LogTemp, Log, TEXT("WorldGenerator: launching world '%s' with seed %d"),
+				*Descriptor.WorldName, Descriptor.Seed);
+		}
+	}
 
 	if (!TerrainMaterial)
 	{
@@ -624,29 +639,20 @@ bool AWorldGenerator::GetBlockAtWorldLocation(const FVector& WorldLocation, uint
 
 void AWorldGenerator::LoadRenderDistanceSetting()
 {
-	int32 SavedRenderDistance = 0;
-	const bool bLoaded = GConfig
-		&& GConfig->GetInt(GRenderDistanceSection, GRenderDistanceKey, SavedRenderDistance, GGameUserSettingsIni);
-
-	RenderDistance = FMath::Clamp(
-		bLoaded ? SavedRenderDistance : RenderDistance,
-		MinRenderDistance,
-		MaxRenderDistance);
-
-	UE_LOG(LogWorldGenerator, Log, TEXT("Render distance = %d chunks (radius), %s"),
-		RenderDistance,
-		bLoaded ? TEXT("restored from GameUserSettings.ini") : TEXT("using default"));
+	if (UGameSettingsSubsystem* Settings = UGameSettingsSubsystem::Get(this))
+	{
+		RenderDistance = FMath::Clamp(Settings->GetRenderDistance(), MinRenderDistance, MaxRenderDistance);
+		UE_LOG(LogWorldGenerator, Log, TEXT("Render distance = %d chunks (radius), restored from GameSettingsSubsystem"), RenderDistance);
+	}
+	else
+	{
+		UE_LOG(LogWorldGenerator, Log, TEXT("Render distance = %d chunks (radius), using default (no subsystem)"), RenderDistance);
+	}
 }
 
 void AWorldGenerator::SaveRenderDistanceSetting() const
 {
-	if (!GConfig)
-	{
-		return;
-	}
-
-	GConfig->SetInt(GRenderDistanceSection, GRenderDistanceKey, RenderDistance, GGameUserSettingsIni);
-	GConfig->Flush(false, GGameUserSettingsIni);
+	// The subsystem is the single writer. No-op here.
 }
 
 int32 AWorldGenerator::SetRenderDistance(int32 NewRenderDistance)
@@ -658,7 +664,10 @@ int32 AWorldGenerator::SetRenderDistance(int32 NewRenderDistance)
 	}
 
 	RenderDistance = ClampedRenderDistance;
-	SaveRenderDistanceSetting();
+	if (UGameSettingsSubsystem* Settings = UGameSettingsSubsystem::Get(this))
+	{
+		Settings->SetRenderDistance(ClampedRenderDistance);
+	}
 
 	// Streaming needs a player chunk coordinate; before BeginPlay the value is only stored and persisted.
 	if (bHasPlayerCoord)
@@ -672,29 +681,20 @@ int32 AWorldGenerator::SetRenderDistance(int32 NewRenderDistance)
 
 void AWorldGenerator::LoadFastLeavesSetting()
 {
-	bool bSavedFastLeaves = bFastLeaves;
-	const bool bLoaded = GConfig
-		&& GConfig->GetBool(GRenderDistanceSection, GFastLeavesKey, bSavedFastLeaves, GGameUserSettingsIni);
-
-	if (bLoaded)
+	if (UGameSettingsSubsystem* Settings = UGameSettingsSubsystem::Get(this))
 	{
-		bFastLeaves = bSavedFastLeaves;
+		bFastLeaves = Settings->GetFastLeaves();
+		UE_LOG(LogWorldGenerator, Log, TEXT("Fast leaves = %s (restored from GameSettingsSubsystem)"), bFastLeaves ? TEXT("true") : TEXT("false"));
 	}
-
-	UE_LOG(LogWorldGenerator, Log, TEXT("Fast leaves = %s (%s)"),
-		bFastLeaves ? TEXT("true") : TEXT("false"),
-		bLoaded ? TEXT("restored from GameUserSettings.ini") : TEXT("using default"));
+	else
+	{
+		UE_LOG(LogWorldGenerator, Log, TEXT("Fast leaves = %s (using default, no subsystem)"), bFastLeaves ? TEXT("true") : TEXT("false"));
+	}
 }
 
 void AWorldGenerator::SaveFastLeavesSetting() const
 {
-	if (!GConfig)
-	{
-		return;
-	}
-
-	GConfig->SetBool(GRenderDistanceSection, GFastLeavesKey, bFastLeaves, GGameUserSettingsIni);
-	GConfig->Flush(false, GGameUserSettingsIni);
+	// The subsystem is the single writer. No-op here.
 }
 
 bool AWorldGenerator::SetFastLeaves(bool bNewFastLeaves)
@@ -705,7 +705,10 @@ bool AWorldGenerator::SetFastLeaves(bool bNewFastLeaves)
 	}
 
 	bFastLeaves = bNewFastLeaves;
-	SaveFastLeavesSetting();
+	if (UGameSettingsSubsystem* Settings = UGameSettingsSubsystem::Get(this))
+	{
+		Settings->SetFastLeaves(bNewFastLeaves);
+	}
 
 	// The flag is stored but deliberately does not change the mesh yet: culling the
 	// contact between two leaves while the leaf texture stays alpha-tested turns the
@@ -719,29 +722,20 @@ bool AWorldGenerator::SetFastLeaves(bool bNewFastLeaves)
 
 void AWorldGenerator::LoadWindStrengthSetting()
 {
-	float SavedWindStrength = WindStrength;
-	const bool bLoaded = GConfig
-		&& GConfig->GetFloat(GRenderDistanceSection, GWindStrengthKey, SavedWindStrength, GGameUserSettingsIni);
-
-	WindStrength = FMath::Clamp(
-		bLoaded ? SavedWindStrength : WindStrength,
-		MinWindStrength,
-		MaxWindStrength);
-
-	UE_LOG(LogWorldGenerator, Log, TEXT("Wind strength = %.2f (%s)"),
-		WindStrength,
-		bLoaded ? TEXT("restored from GameUserSettings.ini") : TEXT("using default"));
+	if (UGameSettingsSubsystem* Settings = UGameSettingsSubsystem::Get(this))
+	{
+		WindStrength = FMath::Clamp(Settings->GetWindStrength(), MinWindStrength, MaxWindStrength);
+		UE_LOG(LogWorldGenerator, Log, TEXT("Wind strength = %.2f (restored from GameSettingsSubsystem)"), WindStrength);
+	}
+	else
+	{
+		UE_LOG(LogWorldGenerator, Log, TEXT("Wind strength = %.2f (using default, no subsystem)"), WindStrength);
+	}
 }
 
 void AWorldGenerator::SaveWindStrengthSetting() const
 {
-	if (!GConfig)
-	{
-		return;
-	}
-
-	GConfig->SetFloat(GRenderDistanceSection, GWindStrengthKey, WindStrength, GGameUserSettingsIni);
-	GConfig->Flush(false, GGameUserSettingsIni);
+	// The subsystem is the single writer. No-op here.
 }
 
 void AWorldGenerator::ApplyWindStrengthSetting() const
@@ -770,7 +764,10 @@ float AWorldGenerator::SetWindStrength(float NewWindStrength)
 
 	WindStrength = ClampedWindStrength;
 	ApplyWindStrengthSetting();
-	SaveWindStrengthSetting();
+	if (UGameSettingsSubsystem* Settings = UGameSettingsSubsystem::Get(this))
+	{
+		Settings->SetWindStrength(ClampedWindStrength);
+	}
 
 	UE_LOG(LogWorldGenerator, Log, TEXT("Wind strength set to %.2f"), WindStrength);
 	return WindStrength;

@@ -8,7 +8,7 @@ public class MinecraftDeWish : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "ProceduralMeshComponent", "UMG", "Slate", "SlateCore", "AIModule", "NavigationSystem", "EnhancedInput" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "ProceduralMeshComponent", "UMG", "Slate", "SlateCore", "AIModule", "NavigationSystem", "EnhancedInput", "CommonUI", "CommonInput" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
