@@ -213,7 +213,7 @@ void AWorldGenerator::Tick(float DeltaTime)
 	EnsureDestroySystemConfigured();
 	EnsureDropItemBound();
 
-	// Update active concurrent mining queue via modular subsystem
+	// Update active concurrent mining queue via modular subsystem (placeholder for future C++ queue route).
 	TArray<FIntVector> CompletedVoxels;
 	if (MiningQueueSystem)
 	{
@@ -228,9 +228,8 @@ void AWorldGenerator::Tick(float DeltaTime)
 		ActiveMiningTasks = MiningQueueSystem->GetActiveMiningTasks();
 	}
 
-	// Sync the crack overlays with the active mining queue (spawn, stage update, remove).
-	// CompletedVoxels are already returned empty of finished tasks by TickQueue.
-	UpdateBlockCrackOverlays();
+	// Crack overlays are driven directly by AC_DestroySystem in gameplay (see WorldGenerator::UpdateCrackMining).
+	// The C++ update is not called every tick to keep progress authoritative from the Blueprint timers.
 
 	// Update furnace smelting timers via modular subsystem
 	if (CraftingSmeltingSystem)
@@ -1393,6 +1392,17 @@ bool AWorldGenerator::BreakBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ
 			(*FoundChunk)->SetBlock(LocalX, LocalY, VoxelZ, static_cast<uint8>(EBlockType::Air));
 			(*FoundChunk)->UpdateMesh();
 
+			// The block is gone: destroy any mining crack overlay that was sitting on it.
+			const FIntVector BrokenVoxel(VoxelX, VoxelY, VoxelZ);
+			if (TWeakObjectPtr<ABlockCrackActor>* CrackEntry = BlockCrackOverlays.Find(BrokenVoxel))
+			{
+				if (ABlockCrackActor* CrackOverlay = CrackEntry->Get())
+				{
+					CrackOverlay->DestroyCrackOverlay();
+				}
+				BlockCrackOverlays.Remove(BrokenVoxel);
+			}
+
 			// If on boundary, update adjacent neighbor chunk
 			if (LocalX == 0)
 			{
@@ -1933,65 +1943,159 @@ void AWorldGenerator::UpdateTargetBlockHighlight()
 	}
 }
 
+float AWorldGenerator::GetBlockDurabilityFromTable(const uint8 BlockID) const
+{
+	UDataTable* Table = BlockDataTable;
+	if (!Table)
+	{
+		Table = Cast<UDataTable>(StaticLoadObject(UDataTable::StaticClass(), nullptr, TEXT("/Game/Data/Block_DataTable.Block_DataTable")));
+	}
+
+	if (!Table)
+	{
+		return 1.0f;
+	}
+
+	const UScriptStruct* RowStruct = Table->GetRowStruct();
+	if (!RowStruct)
+	{
+		return 1.0f;
+	}
+
+	for (auto It = Table->GetRowMap().CreateConstIterator(); It; ++It)
+	{
+		const uint8* RowData = It.Value();
+		if (!RowData) continue;
+
+		int32 RowBlockID = -1;
+		double RowDur = 1.0;
+		for (TFieldIterator<FProperty> PropIt(RowStruct); PropIt; ++PropIt)
+		{
+			FProperty* Prop = *PropIt;
+			const FString PropName = Prop->GetName();
+			if (PropName.Contains(TEXT("BlockID"), ESearchCase::IgnoreCase))
+			{
+				if (FIntProperty* IP = CastField<FIntProperty>(Prop))
+					RowBlockID = IP->GetPropertyValue_InContainer(RowData);
+				else if (FByteProperty* BP = CastField<FByteProperty>(Prop))
+					RowBlockID = BP->GetPropertyValue_InContainer(RowData);
+			}
+			else if (PropName.Contains(TEXT("Durability"), ESearchCase::IgnoreCase))
+			{
+				if (FDoubleProperty* DP = CastField<FDoubleProperty>(Prop))
+					RowDur = DP->GetPropertyValue_InContainer(RowData);
+				else if (FFloatProperty* FP = CastField<FFloatProperty>(Prop))
+					RowDur = FP->GetPropertyValue_InContainer(RowData);
+			}
+		}
+
+		if (RowBlockID == static_cast<int32>(BlockID))
+		{
+			return FMath::Max(0.05f, static_cast<float>(RowDur));
+		}
+	}
+
+	return 1.0f;
+}
+
+float AWorldGenerator::GetBlockBreakTimeAtVoxel(const FIntVector& VoxelCoord, const float MiningForce) const
+{
+	uint8 BlockID = static_cast<uint8>(EBlockType::Air);
+	if (!GetVoxelAt(VoxelCoord.X, VoxelCoord.Y, VoxelCoord.Z, BlockID) || BlockID == static_cast<uint8>(EBlockType::Air))
+	{
+		return 1.0f;
+	}
+
+	float Force = MiningForce;
+	if (Force <= 0.0f)
+	{
+		APlayerController* PC = GetWorld()->GetFirstPlayerController();
+		if (PC && PC->GetPawn())
+		{
+			if (UBaublesSystem* Baubles = PC->GetPawn()->FindComponentByClass<UBaublesSystem>())
+			{
+				Force = Baubles->GetBestMiningForce(BlockID);
+			}
+		}
+	}
+	const float BestToolForce = GetToolMiningForce();
+	if (Force <= 1.0f) // hand force is the fallback; a passed lower force still outranks "nothing"
+	{
+		Force = BestToolForce;
+	}
+	Force = FMath::Max(Force, 0.01f);
+
+	const float Durability = GetBlockDurabilityFromTable(BlockID);
+	return UMiningQueueSystem::CalculateBreakTime(Durability, Force);
+}
+
 void AWorldGenerator::HandleBlockMiningCompleted(const FIntVector& VoxelCoord, uint8 BlockID)
 {
 	OnBlockMiningCompleted.Broadcast(VoxelCoord, BlockID);
 }
 
-void AWorldGenerator::UpdateBlockCrackOverlays()
+ABlockCrackActor* AWorldGenerator::SpawnOrGetCrackOverlay(const FIntVector& VoxelCoord, const uint8 BlockID)
 {
-	if (!MiningQueueSystem)
+	TWeakObjectPtr<ABlockCrackActor>& Entry = BlockCrackOverlays.FindOrAdd(VoxelCoord);
+	if (Entry.IsValid())
 	{
+		return Entry.Get();
+	}
+
+	const FVector Center(
+		(static_cast<float>(VoxelCoord.X) + 0.5f) * BlockScale,
+		(static_cast<float>(VoxelCoord.Y) + 0.5f) * BlockScale,
+		(static_cast<float>(VoxelCoord.Z) + 0.5f) * BlockScale);
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ABlockCrackActor* Overlay = GetWorld()->SpawnActor<ABlockCrackActor>(
+		ABlockCrackActor::StaticClass(), Center, FRotator::ZeroRotator, SpawnParams);
+	if (!Overlay)
+	{
+		return nullptr;
+	}
+
+	Overlay->InitializeCrackOverlay(VoxelCoord, BlockID, BlockScale, Center);
+	Entry = Overlay;
+	return Overlay;
+}
+
+void AWorldGenerator::UpdateCrackMining(const FIntVector& VoxelCoord, const float Progress01)
+{
+	uint8 BlockID = static_cast<uint8>(EBlockType::Air);
+	if (!GetVoxelAt(VoxelCoord.X, VoxelCoord.Y, VoxelCoord.Z, BlockID)
+		|| BlockID == static_cast<uint8>(EBlockType::Air)
+		|| BlockID == static_cast<uint8>(EBlockType::Bedrock))
+	{
+		// Nothing breakable here (out of chunks, air, or bedrock): destroy and drop any overlay at this spot.
+		if (TWeakObjectPtr<ABlockCrackActor>* Existing = BlockCrackOverlays.Find(VoxelCoord))
+		{
+			if (ABlockCrackActor* Stale = Existing->Get())
+			{
+				Stale->DestroyCrackOverlay();
+			}
+			BlockCrackOverlays.Remove(VoxelCoord);
+		}
 		return;
 	}
 
-	const TArray<FMiningTask> Tasks = MiningQueueSystem->GetActiveMiningTasks();
-
-	// Spawn overlays for new tasks and advance the crack stage of existing ones
-	for (const FMiningTask& Task : Tasks)
+	ABlockCrackActor* Overlay = SpawnOrGetCrackOverlay(VoxelCoord, BlockID);
+	if (Overlay && Overlay->UpdateCrackStage(FMath::Clamp(Progress01, 0.0f, 1.0f)))
 	{
-		TWeakObjectPtr<ABlockCrackActor>& Entry = BlockCrackOverlays.FindOrAdd(Task.VoxelCoord);
-		if (!Entry.IsValid())
-		{
-			const FVector Center(
-				(static_cast<float>(Task.VoxelCoord.X) + 0.5f) * BlockScale,
-				(static_cast<float>(Task.VoxelCoord.Y) + 0.5f) * BlockScale,
-				(static_cast<float>(Task.VoxelCoord.Z) + 0.5f) * BlockScale);
-
-			FActorSpawnParameters SpawnParams;
-			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-			ABlockCrackActor* Overlay = GetWorld()->SpawnActor<ABlockCrackActor>(ABlockCrackActor::StaticClass(), Center, FRotator::ZeroRotator, SpawnParams);
-			if (Overlay)
-			{
-				Overlay->InitializeCrackOverlay(Task.VoxelCoord, Task.BlockID, BlockScale, Center);
-				Entry = Overlay;
-			}
-		}
-
-		if (ABlockCrackActor* Overlay = Entry.Get())
-		{
-			if (Overlay->UpdateCrackStage(Task.Progress))
-			{
-				OnCrackStageChanged.Broadcast(Task.VoxelCoord, Overlay->CurrentStage);
-			}
-		}
+		OnCrackStageChanged.Broadcast(VoxelCoord, Overlay->CurrentStage);
 	}
+}
 
-	// Remove overlays whose task finished breaking or was cancelled / externally destroyed
+void AWorldGenerator::ClearCrackMining()
+{
 	for (auto It = BlockCrackOverlays.CreateIterator(); It; ++It)
 	{
-		const bool bStillActive = Tasks.ContainsByPredicate(
-			[&It](const FMiningTask& Candidate) { return Candidate.VoxelCoord == It.Key(); });
-		ABlockCrackActor* Overlay = It.Value().Get();
-
-		if (!bStillActive || !Overlay)
+		if (ABlockCrackActor* Overlay = It.Value().Get())
 		{
-			if (Overlay)
-			{
-				Overlay->DestroyCrackOverlay();
-			}
-			It.RemoveCurrent();
+			Overlay->DestroyCrackOverlay();
 		}
+		It.RemoveCurrent();
 	}
 }
 

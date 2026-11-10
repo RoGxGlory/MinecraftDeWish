@@ -461,6 +461,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Mining|Queue")
 	TArray<FMiningTask> GetActiveMiningTasks() const;
 
+	/** Calculates the mining break time in seconds at the given voxel (Durability / Force). Falls back to 1.0 s. */
+	UFUNCTION(BlueprintPure, Category = "Mining|Crack")
+	float GetBlockBreakTimeAtVoxel(const FIntVector& VoxelCoord, float MiningForce = 0.0f) const;
+
+	// ==================== MINING CRACK OVERLAY (Blueprint bridge) ====================
+
+	/**
+	 * Bridge called by the mining Blueprint (BP_HorrorCharacter) during block-breaking.
+	 * Spawns (or reuses) a vanilla-style crack overlay at the given voxel and advances it
+	 * to the stage matching Progress01 (0..1). The Blueprint owns the progress source of truth.
+	 * @param VoxelCoord Global voxel position of the targeted block.
+	 * @param Progress01 Accumulated break time / total time needed, 0..1.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Mining|Crack")
+	void UpdateCrackMining(const FIntVector& VoxelCoord, float Progress01);
+
+	/** Destroys all current crack mining overlays (block broke, mining was cancelled, target lost). */
+	UFUNCTION(BlueprintCallable, Category = "Mining|Crack")
+	void ClearCrackMining();
+
 	// ==================== MINING ANIMATION HOOKS ====================
 
 	/** Fired once per attack on a valid block target. Hook for swing animations and per-hit dig sounds/particles. */
@@ -565,6 +585,9 @@ private:
 	/** Write the current render distance to GameUserSettings.ini. */
 	void SaveRenderDistanceSetting() const;
 
+	/** Returns the durability of the block, read from Block_DataTable. Falls back to 1.0f if not found. */
+	float GetBlockDurabilityFromTable(uint8 BlockID) const;
+
 	/** Read the persisted leaf rendering mode from GameUserSettings.ini, falling back to the current value. */
 	void LoadFastLeavesSetting();
 
@@ -628,11 +651,11 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<ABlockHighlightActor> BlockHighlightActor = nullptr;
 
-	/** Crack overlays mirroring the active mining queue, keyed by voxel. Maintained by UpdateBlockCrackOverlays. */
+	/** Crack overlays mirroring the active mining interaction, keyed by voxel. Maintained by the Blueprint bridge. */
 	TMap<FIntVector, TWeakObjectPtr<ABlockCrackActor>> BlockCrackOverlays;
 
-	/** Spawns/updates/destroys ABlockCrackActor instances to mirror the active mining queue (called once per Tick). */
-	void UpdateBlockCrackOverlays();
+	/** Spawns (or reuses) the crack overlay at a voxel coordinate. Returns null if spawn fails. */
+	ABlockCrackActor* SpawnOrGetCrackOverlay(const FIntVector& VoxelCoord, uint8 BlockID);
 
 	/** Forwards UMiningQueueSystem::OnBlockMiningCompleted onto the world-scope OnBlockMiningCompleted delegate. */
 	UFUNCTION()
