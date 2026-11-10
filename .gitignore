@@ -91,3 +91,5 @@ production/session-logs/
 # EngineWire plugin (installed from release, not source)
 Plugins/EngineWire/
 
+Automation_MinecraftDeWish.slnx
+MinecraftDeWish.slnx
