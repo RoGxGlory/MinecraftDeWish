@@ -88,3 +88,6 @@ MinecraftDeWish.slnx
 production/session-state/
 production/session-logs/
 
+# EngineWire plugin (installed from release, not source)
+Plugins/EngineWire/
+
