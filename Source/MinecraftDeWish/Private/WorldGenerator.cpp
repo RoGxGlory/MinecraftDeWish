@@ -3,6 +3,7 @@
 #include "BlockItemPickup.h"
 #include "ChaosBlockDestructionActor.h"
 #include "BlockHighlightActor.h"
+#include "BlockCrackActor.h"
 #include "UObject/Interface.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -66,6 +67,7 @@ AWorldGenerator::AWorldGenerator()
 	}
 
 	MiningQueueSystem = CreateDefaultSubobject<UMiningQueueSystem>(TEXT("MiningQueueSystem"));
+	MiningQueueSystem->OnBlockMiningCompleted.AddDynamic(this, &AWorldGenerator::HandleBlockMiningCompleted);
 	CraftingSmeltingSystem = CreateDefaultSubobject<UCraftingSmeltingSystem>(TEXT("CraftingSmeltingSystem"));
 	DayNightCycleSystem = CreateDefaultSubobject<UDayNightCycleSystem>(TEXT("DayNightCycleSystem"));
 	MobSpawnerSystem = CreateDefaultSubobject<UMobSpawnerSystem>(TEXT("MobSpawnerSystem"));
@@ -212,9 +214,9 @@ void AWorldGenerator::Tick(float DeltaTime)
 	EnsureDropItemBound();
 
 	// Update active concurrent mining queue via modular subsystem
+	TArray<FIntVector> CompletedVoxels;
 	if (MiningQueueSystem)
 	{
-		TArray<FIntVector> CompletedVoxels;
 		MiningQueueSystem->TickQueue(DeltaTime, CompletedVoxels);
 
 		for (const FIntVector& Coord : CompletedVoxels)
@@ -225,6 +227,10 @@ void AWorldGenerator::Tick(float DeltaTime)
 
 		ActiveMiningTasks = MiningQueueSystem->GetActiveMiningTasks();
 	}
+
+	// Sync the crack overlays with the active mining queue (spawn, stage update, remove).
+	// CompletedVoxels are already returned empty of finished tasks by TickQueue.
+	UpdateBlockCrackOverlays();
 
 	// Update furnace smelting timers via modular subsystem
 	if (CraftingSmeltingSystem)
@@ -1927,6 +1933,68 @@ void AWorldGenerator::UpdateTargetBlockHighlight()
 	}
 }
 
+void AWorldGenerator::HandleBlockMiningCompleted(const FIntVector& VoxelCoord, uint8 BlockID)
+{
+	OnBlockMiningCompleted.Broadcast(VoxelCoord, BlockID);
+}
+
+void AWorldGenerator::UpdateBlockCrackOverlays()
+{
+	if (!MiningQueueSystem)
+	{
+		return;
+	}
+
+	const TArray<FMiningTask> Tasks = MiningQueueSystem->GetActiveMiningTasks();
+
+	// Spawn overlays for new tasks and advance the crack stage of existing ones
+	for (const FMiningTask& Task : Tasks)
+	{
+		TWeakObjectPtr<ABlockCrackActor>& Entry = BlockCrackOverlays.FindOrAdd(Task.VoxelCoord);
+		if (!Entry.IsValid())
+		{
+			const FVector Center(
+				(static_cast<float>(Task.VoxelCoord.X) + 0.5f) * BlockScale,
+				(static_cast<float>(Task.VoxelCoord.Y) + 0.5f) * BlockScale,
+				(static_cast<float>(Task.VoxelCoord.Z) + 0.5f) * BlockScale);
+
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			ABlockCrackActor* Overlay = GetWorld()->SpawnActor<ABlockCrackActor>(ABlockCrackActor::StaticClass(), Center, FRotator::ZeroRotator, SpawnParams);
+			if (Overlay)
+			{
+				Overlay->InitializeCrackOverlay(Task.VoxelCoord, Task.BlockID, BlockScale, Center);
+				Entry = Overlay;
+			}
+		}
+
+		if (ABlockCrackActor* Overlay = Entry.Get())
+		{
+			if (Overlay->UpdateCrackStage(Task.Progress))
+			{
+				OnCrackStageChanged.Broadcast(Task.VoxelCoord, Overlay->CurrentStage);
+			}
+		}
+	}
+
+	// Remove overlays whose task finished breaking or was cancelled / externally destroyed
+	for (auto It = BlockCrackOverlays.CreateIterator(); It; ++It)
+	{
+		const bool bStillActive = Tasks.ContainsByPredicate(
+			[&It](const FMiningTask& Candidate) { return Candidate.VoxelCoord == It.Key(); });
+		ABlockCrackActor* Overlay = It.Value().Get();
+
+		if (!bStillActive || !Overlay)
+		{
+			if (Overlay)
+			{
+				Overlay->DestroyCrackOverlay();
+			}
+			It.RemoveCurrent();
+		}
+	}
+}
+
 int32 AWorldGenerator::GetMaxQueueSlots() const
 {
 	return MiningQueueSystem ? MiningQueueSystem->GetMaxQueueSlots() : 1;
@@ -1954,6 +2022,16 @@ bool AWorldGenerator::QueueBlockBreakAtVoxel(int32 VoxelX, int32 VoxelY, int32 V
 	if (!GetVoxelAt(VoxelX, VoxelY, VoxelZ, BlockID) || BlockID == 0 || BlockID == static_cast<uint8>(EBlockType::Bedrock))
 	{
 		return false;
+	}
+
+	// Broadcast a swing/strike event for Blueprint consumers (tool animation, per-hit dig sound).
+	// Fired for every attack on a valid target, before the queue attempt, mirroring vanilla's LMB swing.
+	{
+		const FVector BlockCenter(
+			(static_cast<float>(VoxelX) + 0.5f) * BlockScale,
+			(static_cast<float>(VoxelY) + 0.5f) * BlockScale,
+			(static_cast<float>(VoxelZ) + 0.5f) * BlockScale);
+		OnToolStrike.Broadcast(FIntVector(VoxelX, VoxelY, VoxelZ), BlockID, BlockCenter);
 	}
 
 	// Query durability from BlockDataTable

@@ -13,7 +13,14 @@
 
 class AChunkActor;
 class ABlockHighlightActor;
+class ABlockCrackActor;
 class UMaterialParameterCollection;
+
+/** Fired once per attack on a valid block target. Hook for swing animations and per-hit dig sounds/particles. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnToolStrike, FIntVector, VoxelCoord, uint8, BlockID, FVector, WorldLocation);
+
+/** Fired when a crack overlay advances to a new stage (0..9). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCrackStageChanged, FIntVector, VoxelCoord, int32, Stage);
 
 /**
  * Streaming work measured during one tick of AWorldGenerator, in milliseconds.
@@ -454,6 +461,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Mining|Queue")
 	TArray<FMiningTask> GetActiveMiningTasks() const;
 
+	// ==================== MINING ANIMATION HOOKS ====================
+
+	/** Fired once per attack on a valid block target. Hook for swing animations and per-hit dig sounds/particles. */
+	UPROPERTY(BlueprintAssignable, Category = "Mining|Events")
+	FOnToolStrike OnToolStrike;
+
+	/** Fired when a voxel block finishes breaking. Mirrors UMiningQueueSystem::OnBlockMiningCompleted at world scope. */
+	UPROPERTY(BlueprintAssignable, Category = "Mining|Events")
+	FOnBlockMiningCompleted OnBlockMiningCompleted;
+
+	/** Fired when a crack overlay advances to a new stage (0..9). */
+	UPROPERTY(BlueprintAssignable, Category = "Mining|Events")
+	FOnCrackStageChanged OnCrackStageChanged;
+
 	// ==================== CRAFTING & SMELTING FACADE ====================
 
 	/** Crafts and equips a new tool tier */
@@ -606,6 +627,16 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<ABlockHighlightActor> BlockHighlightActor = nullptr;
+
+	/** Crack overlays mirroring the active mining queue, keyed by voxel. Maintained by UpdateBlockCrackOverlays. */
+	TMap<FIntVector, TWeakObjectPtr<ABlockCrackActor>> BlockCrackOverlays;
+
+	/** Spawns/updates/destroys ABlockCrackActor instances to mirror the active mining queue (called once per Tick). */
+	void UpdateBlockCrackOverlays();
+
+	/** Forwards UMiningQueueSystem::OnBlockMiningCompleted onto the world-scope OnBlockMiningCompleted delegate. */
+	UFUNCTION()
+	void HandleBlockMiningCompleted(const FIntVector& VoxelCoord, uint8 BlockID);
 
 	void UpdateTargetBlockHighlight();
 	void EnsureDestroySystemConfigured();
