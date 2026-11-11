@@ -1,0 +1,175 @@
+{
+  "meshes": [
+    {
+      "name": "SM_WeepingAngel_HeadTurned",
+      "path": "/Game/Characters/WeepingAngel/Meshes/SM_WeepingAngel_HeadTurned",
+      "import_file": "SM_WeepingAngel_HeadTurned.fbx",
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings"
+        }
+      ],
+      "size_cm": [
+        98.44,
+        78.78,
+        185.0
+      ],
+      "min": [
+        -49.22,
+        -39.39,
+        -0.0
+      ],
+      "max": [
+        49.22,
+        39.39,
+        185.0
+      ]
+    },
+    {
+      "name": "SM_WeepingAngel_HandsOnFace",
+      "path": "/Game/Characters/WeepingAngel/Meshes/SM_WeepingAngel_HandsOnFace",
+      "import_file": "SM_WeepingAngel_HandsOnFace.fbx",
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings"
+        }
+      ],
+      "size_cm": [
+        98.44,
+        99.45,
+        184.04
+      ],
+      "min": [
+        -49.22,
+        -39.39,
+        -0.0
+      ],
+      "max": [
+        49.22,
+        60.06,
+        184.04
+      ]
+    },
+    {
+      "name": "SM_WeepingAngel_MidStride",
+      "path": "/Game/Characters/WeepingAngel/Meshes/SM_WeepingAngel_MidStride",
+      "import_file": "SM_WeepingAngel_MidStride.fbx",
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings"
+        }
+      ],
+      "size_cm": [
+        98.44,
+        124.98,
+        185.0
+      ],
+      "min": [
+        -49.22,
+        -59.53,
+        -0.0
+      ],
+      "max": [
+        49.22,
+        65.45,
+        185.0
+      ]
+    },
+    {
+      "name": "SM_WeepingAngel_Crouched",
+      "path": "/Game/Characters/WeepingAngel/Meshes/SM_WeepingAngel_Crouched",
+      "import_file": "SM_WeepingAngel_Crouched.fbx",
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings"
+        }
+      ],
+      "size_cm": [
+        123.04,
+        78.78,
+        119.75
+      ],
+      "min": [
+        -61.52,
+        -39.39,
+        -0.0
+      ],
+      "max": [
+        61.52,
+        39.39,
+        119.75
+      ]
+    },
+    {
+      "name": "SM_WeepingAngel_WingsHalfOpen",
+      "path": "/Game/Characters/WeepingAngel/Meshes/SM_WeepingAngel_WingsHalfOpen",
+      "import_file": "SM_WeepingAngel_WingsHalfOpen.fbx",
+      "slots": [
+        {
+          "slot": "M_WeepingAngel_Body",
+          "material": "M_WeepingAngel_Body"
+        },
+        {
+          "slot": "M_WeepingAngel_Face",
+          "material": "M_WeepingAngel_Face"
+        },
+        {
+          "slot": "M_WeepingAngel_Wings",
+          "material": "M_WeepingAngel_Wings"
+        }
+      ],
+      "size_cm": [
+        152.58,
+        78.78,
+        185.0
+      ],
+      "min": [
+        -76.29,
+        -39.39,
+        -0.0
+      ],
+      "max": [
+        76.29,
+        39.39,
+        185.0
+      ]
+    }
+  ],
+  "errors": []
+}

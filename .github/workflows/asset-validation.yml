@@ -1,0 +1,63 @@
+name: Asset Validation
+
+# Validates naming conventions, texture dimensions and size budgets.
+# Runs on every PR and on pushes to main/develop.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-assets:
+    name: Lint Assets (naming, dimensions, compression)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Pillow
+        run: python -m pip install --upgrade pillow
+
+      - name: Run asset validator
+        run: python .github/scripts/validate_assets.py
+
+      - name: Validate JSON files (UTF-8, no trailing commas)
+        shell: bash
+        run: |
+          set -e
+          fail=0
+          while IFS= read -r -d '' f; do
+            if ! python -c "import json,sys; json.load(open('$f',encoding='utf-8'))" 2>/dev/null; then
+              echo "INVALID JSON: $f"; fail=1
+            fi
+          done < <(find . -type f -name '*.json' -not -path './.git/*' -print0)
+          exit $fail
+
+      - name: Check for large untracked binaries
+        shell: bash
+        run: |
+          # Warn if any single file > 100 MB is not LFS-tracked
+          find . -type f -size +100M -not -path './.git/*' -print | while read -r f; do
+            if git check-attr filter -- "$f" | grep -q "lfs"; then
+              echo "LFS-tracked large file: $f"
+            else
+              echo "::warning::Large file not LFS-tracked: $f"
+            fi
+          done

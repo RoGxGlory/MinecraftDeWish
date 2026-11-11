@@ -1,0 +1,7 @@
+{
+  "skm": "<Object '/Game/Characters/Arms/SK_Arms_FP.SK_Arms_FP' (0x000001BFB7C3DC00) Class 'SkeletalMesh'>",
+  "skeleton": "<Object '/Game/Characters/Arms/SK_Arms_FP_Skeleton.SK_Arms_FP_Skeleton' (0x000001BFFD7AAE00) Class 'Skeleton'>",
+  "bone_tree_type": "<class 'Array'>",
+  "ref_skel_err": "SkeletalMesh: Failed to find property 'ref_skeleton' for attribute 'ref_skeleton' on 'SkeletalMesh'",
+  "num_sockets": 0
+}

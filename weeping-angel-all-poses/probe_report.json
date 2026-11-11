@@ -1,0 +1,17 @@
+{
+  "FToolRow": false,
+  "EToolType": false,
+  "EToolTier": false,
+  "ToolDefinition": true,
+  "DataTable": true,
+  "DataTableFactory": true,
+  "DataAssetFactory": true,
+  "DataTable_methods": [
+    "does_row_exist",
+    "get_row_names",
+    "get_row_struct"
+  ],
+  "struct_load_FToolRow": "None",
+  "struct_load_ToolRow": "<Object '/Script/MinecraftDeWish.ToolRow' (0x000001C71C42C240) Class 'ScriptStruct'>",
+  "find_struct_err": "module 'unreal' has no attribute 'find_struct'"
+}

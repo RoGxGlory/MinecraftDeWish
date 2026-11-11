@@ -3,7 +3,10 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "VoxelDataTypes.h"
+#include "Async/Async.h"
 #include "VoxelNoise.h"
+#include "VoxelPlacementRules.h"
+#include "VoxelCaveRules.h"
 #include "MiningQueueSystem.h"
 #include "CraftingSmeltingSystem.h"
 #include "VoxelStructureGenerator.h"
@@ -15,12 +18,30 @@ class AChunkActor;
 class ABlockHighlightActor;
 class ABlockCrackActor;
 class UMaterialParameterCollection;
+class UPointLightComponent;
 
 /** Fired once per attack on a valid block target. Hook for swing animations and per-hit dig sounds/particles. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnToolStrike, FIntVector, VoxelCoord, uint8, BlockID, FVector, WorldLocation);
 
 /** Fired when a crack overlay advances to a new stage (0..9). */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCrackStageChanged, FIntVector, VoxelCoord, int32, Stage);
+
+/**
+ * Fired once a block placement has been written and its consequences applied.
+ *
+ * Only successful commits fire it: a rejected placement is deliberately silent in the world and
+ * must not produce a feedback event either (`design/gdd/block-placement.md` §3.11).
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnBlockPlaced, FIntVector, VoxelCoord, uint8, BlockID, uint8, Meta);
+
+/**
+ * Fired whenever the player makes a noise the world can hear.
+ *
+ * Placement is the first producer (`NoiseLoudness`: 2 for a torch, 6 for a block). The Angel AI
+ * described in `design/gdd/weeping-angels.md` §3.4 is the intended consumer; it does not exist
+ * yet, so this delegate is the interface contract in the meantime.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnNoiseEmitted, FVector, WorldLocation, float, Loudness);
 
 /**
  * Streaming work measured during one tick of AWorldGenerator, in milliseconds.
@@ -176,6 +197,31 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Features")
 	bool bEnableCaves = true;
 
+	/**
+	 * Enable mineshafts and dungeons. Archetypes still carve when this is off, which is the
+	 * authoring mode of `cave-generation.md` §5.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Features")
+	bool bEnableCaveStructures = true;
+
+	/** Every carving knob of the cave pass. See VoxelCaveRules.h and `cave-generation.md` §7. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Caves")
+	FVoxelCaveParams CaveParams;
+
+	/**
+	 * Optional per-biome density table (`DT_CaveProfiles`, one row per `EBiomeType`).
+	 * When empty, `FCaveRules::GetDefaultProfile()` reproduces the shipped table.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Data")
+	UDataTable* CaveProfileTable = nullptr;
+
+	/**
+	 * Record the carving archetype of every cave voxel in `AChunkActor::CaveTag`.
+	 * Diagnostic only (spawner weighting, probes). Costs one byte per voxel per chunk.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Caves")
+	bool bEnableCaveTagging = false;
+
 	/** Enable ore vein distribution (Coal, Iron, Gold, Diamond, Emerald) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Features")
 	bool bEnableOres = true;
@@ -188,9 +234,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Noise")
 	float TerrainFrequency = 0.0035f;
 
-	/** Maximum chunk meshes to build per frame to avoid framerate hitches */
+	/** Maximum chunk meshes to build per frame to avoid framerate hitches (legacy, kept for compat) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Performance")
 	int32 MaxChunkGenerationsPerFrame = 2;
+
+	/** Time budget (ms) for chunk generation per frame. Replaces the chunk-count cap. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Performance", meta = (ClampMin = "0.5", ClampMax = "16.0"))
+	float MaxGenerationTimeMs = 4.0f;
 
 	// ==================== DEDICATED MODULAR SUBSYSTEMS ====================
 
@@ -329,9 +379,79 @@ public:
 		const FVector& HitPoint = FVector::ZeroVector
 	);
 
+	// ==================== BLOCK PLACEMENT SETTINGS ====================
+
+	/** Maximum distance from the camera to the targeted voxel, in Unreal units (400 cm = 4 blocks). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement", meta = (ClampMin = "50.0", ClampMax = "2000.0"))
+	float PlacementReach = 400.0f;
+
+	/** Extra slack added to `PlacementReach` before G1 rejects, in Unreal units. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement", meta = (ClampMin = "0.0", ClampMax = "100.0"))
+	float PlacementReachTolerance = 0.0f;
+
+	/** Minimum delay between two successful commits, in seconds. 0.20 = at most 5 placements/s. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float PlaceCooldown = 0.20f;
+
+	/** Allow holding the input to place continuously at the cooldown rate. Off = one press, one block. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement")
+	bool bAllowHoldToPlace = false;
+
+	/**
+	 * Enable wall-mounted torches. Must stay false until `AChunkActor::AddTorchMesh` honours
+	 * `BlockMetadata`, otherwise a wall torch renders as a floor torch inside the wall.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement")
+	bool bAllowWallTorches = false;
+
+	/** Enable ceiling-mounted torches. Same renderer limitation as the wall mounts. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement")
+	bool bAllowCeilingTorches = false;
+
+	/** Safety margin added to the pawn capsule radius when testing G10, in Unreal units. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement", meta = (ClampMin = "0.0", ClampMax = "20.0"))
+	float PlacementSkin = 2.0f;
+
+	/** Noise loudness of a normal block placement (`block-placement.md` §4.8). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement", meta = (ClampMin = "0", ClampMax = "15"))
+	int32 PlaceNoiseLoudness = 6;
+
+	/** Noise loudness of a torch placement. A torch is a quiet claim on a space. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement", meta = (ClampMin = "0", ClampMax = "15"))
+	int32 TorchPlaceNoiseLoudness = 2;
+
+	/** Drop the torch that was replaced by a placement instead of silently deleting it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement")
+	bool bDropReplacedTorch = true;
+
+	/** How long a crosshair trace stays usable for `PlaceBlock`, in seconds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Generation|Placement", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	float PlacementTraceCacheSeconds = 0.5f;
+
 	/** Place block at world location */
 	UFUNCTION(BlueprintCallable, Category = "World Generation|Interaction")
 	bool PlaceBlock(const FVector& WorldLocation, uint8 BlockID);
+
+	/**
+	 * Programmatic placement at an exact voxel.
+	 *
+	 * Runs the same world transaction as `PlaceBlock` (G2, G5-G10) but skips the player-only gates
+	 * (reach, quick-slot consumption, cooldown), so a tool, a mob or a test can place a block.
+	 *
+	 * @param VoxelX      Global voxel X.
+	 * @param VoxelY      Global voxel Y.
+	 * @param VoxelZ      Global voxel Z.
+	 * @param BlockID     Block to place. 0 is rejected (`NotPlaceable`).
+	 * @param MetaRotation Attachment / rotation metadata. 0 for a floor torch.
+	 * @param bConsumeItem Decrement the matching quick slot, if the player has one.
+	 * @return True when the voxel was written.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "World Generation|Interaction")
+	bool PlaceBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, uint8 BlockID, uint8 MetaRotation, bool bConsumeItem);
+
+	/** Outcome of the most recent placement attempt. Silent in the world, precise in the logs. */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Interaction")
+	EPlaceBlockResult GetLastPlacementResult() const { return LastPlacementResult; }
 
 	/** Line trace helper to find block to break and block placement location */
 	UFUNCTION(BlueprintCallable, Category = "World Generation|Interaction")
@@ -503,6 +623,14 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Mining|Events")
 	FOnCrackStageChanged OnCrackStageChanged;
 
+	/** Fired after a successful placement commit, once the world has changed. */
+	UPROPERTY(BlueprintAssignable, Category = "World Generation|Events")
+	FOnBlockPlaced OnBlockPlaced;
+
+	/** Fired when the player makes a noise the world can hear (placement is the first producer). */
+	UPROPERTY(BlueprintAssignable, Category = "World Generation|Events")
+	FOnNoiseEmitted OnNoiseEmitted;
+
 	// ==================== CRAFTING & SMELTING FACADE ====================
 
 	/** Crafts and equips a new tool tier */
@@ -557,6 +685,23 @@ public:
 	UFUNCTION(BlueprintPure, Category = "World Generation|Interaction")
 	uint8 GetTargetedBlockType() const;
 
+	/** Acquire a torch light from the global pool (max 16, shadowless). */
+	UPointLightComponent* AcquireTorchLight();
+
+	/** Return a torch light to the global pool. */
+	void ReleaseTorchLight(UPointLightComponent* Light);
+
+	/** Runs the placement pipeline (10 gates). Public for GameplayPlayerController. */
+	/** Runs the placement pipeline (10 gates). */
+	EPlaceBlockResult TryPlaceBlock(
+		const FIntVector& Voxel,
+		uint8 BlockID,
+		uint8 Meta,
+		bool bPlayerInitiated,
+		bool bConsumeItem,
+		const FVector& ReachOrigin,
+		const FVector& ReachTarget);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
@@ -568,11 +713,41 @@ private:
 	TSet<FChunkCoord> GeneratingChunks;
 	TArray<FChunkCoord> GenerationQueue;
 
+	/** A chunk generation launched on a background thread, awaiting completion on the game thread. */
+	struct FPendingAsyncChunkGen
+	{
+		FChunkCoord Coord;
+		TWeakObjectPtr<AChunkActor> Chunk;
+		TFuture<void> Future;
+	};
+	TArray<FPendingAsyncChunkGen> PendingAsyncGens;
+
+	/** A chunk meshing pass launched on a background thread, awaiting completion on the game thread. */
+	struct FPendingAsyncChunkMesh
+	{
+		FChunkCoord Coord;
+		TWeakObjectPtr<AChunkActor> Chunk;
+		TFuture<void> Future;
+	};
+	TArray<FPendingAsyncChunkMesh> PendingAsyncMeshes;
+
 	FChunkCoord CurrentPlayerChunkCoord;
 	bool bHasPlayerCoord = false;
 
 	/** Max chunk meshes rebuilt per streaming tick when a rendering setting changes them all. */
 	static constexpr int32 MaxChunkRemeshesPerTick = 8;
+
+	/** Global pool of torch point lights (max 16, shadowless). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UPointLightComponent>> TorchLightPool;
+
+	/** Maximum number of torch lights alive at once. */
+	static constexpr int32 MaxTorchLights = 16;
+
+	/** In-use flags parallel to TorchLightPool. */
+	TArray<bool> TorchLightInUse;
+
+	void InitializeTorchLightPool();
 
 	/** Chunks waiting for a full remesh after a setting that changes face culling. */
 	TArray<FChunkCoord> RemeshQueue;
@@ -619,6 +794,8 @@ private:
 
 	void UpdateChunkStreaming();
 	void ProcessGenerationQueue();
+	void ProcessCompletedAsyncGens();
+	void ProcessCompletedAsyncMeshes();
 
 	AChunkActor* SpawnChunk(const FChunkCoord& Coord);
 	void GenerateChunkData(AChunkActor* Chunk);
@@ -651,6 +828,131 @@ private:
 	void GenerateVillageHouse(AChunkActor* Chunk, int32 CenterX, int32 CenterY, int32 SurfaceZ);
 
 	void SpawnBlockItemDrop(const FVector& WorldLocation, uint8 DroppedBlockID);
+
+	// ==================== BLOCK PLACEMENT (private pipeline) ====================
+
+	/**
+	 * A crosshair trace kept between `TraceForBlock` and `PlaceBlock`.
+	 *
+	 * `PlaceBlock` receives a world location from Blueprint, but the ten-gate pipeline needs the
+	 * *voxel* and the *face*, which the location alone cannot recover reliably. The cache also
+	 * carries the impact point so G1 measures reach against the real target instead of the voxel
+	 * centre.
+	 */
+	struct FPlacementTraceCache
+	{
+		bool bValid = false;
+		double TimeSeconds = 0.0;
+		FIntVector BreakVoxel = FIntVector::ZeroValue;
+		FIntVector PlaceVoxel = FIntVector::ZeroValue;
+		uint8 HitBlockID = 0;
+		FVector HitNormal = FVector::UpVector;
+		FVector HitPoint = FVector::ZeroVector;
+	};
+
+	/** Crosshair trace shared by `TraceForBlock` and `PlaceBlock`. */
+	FPlacementTraceCache PlacementTrace;
+
+	/** World seconds of the last successful commit, for G4. */
+	double LastPlaceTimeSeconds = -1000.0;
+
+	/** Result of the most recent placement attempt. */
+	EPlaceBlockResult LastPlacementResult = EPlaceBlockResult::NoTarget;
+
+	/**
+	 * Runs the placement pipeline and, on success, commits the world transaction.
+	 *
+	 * @param Voxel          Target voxel.
+	 * @param BlockID        Block to place.
+	 * @param Meta           Attachment / rotation metadata.
+	 * @param bPlayerInitiated True to apply the player-only gates (G1 reach, G3 item, G4 cooldown).
+	 * @param bConsumeItem   Decrement the matching quick slot on success.
+	 * @param ReachOrigin    Camera location for G1; ignored when `bPlayerInitiated` is false.
+	 * @param ReachTarget    Point the reach is measured to (the impact point).
+	 */
+	/** G10 — true when any pawn capsule (player or mob) overlaps the voxel. */
+	bool AnyPawnOverlapsVoxel(const FIntVector& Voxel) const;
+
+	/** G3 — consumes one item from the quick slot holding `BlockID`. */
+	bool ConsumePlacementItem(uint8 BlockID);
+
+	/** Resolves the attachment direction of an attaching block, or `BadAttach`. */
+	EPlaceBlockResult ResolveAttachDirection(const FIntVector& Voxel, uint8 BlockID, const FIntVector& NormalStep, FIntVector& OutAttachDir) const;
+
+	/** Plays the placement cue at the voxel and fires `OnBlockPlaced`. */
+	void PlayPlacementFeedback(const FIntVector& Voxel, uint8 BlockID, uint8 Meta);
+
+	/** `SFX_Torch` for a torch, `SFX_BlockPlace_<Material>` otherwise. */
+	FName GetPlacementCueName(uint8 BlockID) const;
+
+	/** Fires `OnNoiseEmitted` with the loudness of this placement. */
+	void EmitPlacementNoise(const FIntVector& Voxel, uint8 BlockID);
+
+	/** Pops the attached blocks (torches) whose support just disappeared, recursively. */
+	void CascadeSupportLoss(const FIntVector& Voxel, int32 Depth);
+
+	/** Remeshes the owning chunk and any chunk touching a voxel on a chunk border. */
+	void RemeshVoxelNeighbourhood(const FIntVector& Voxel);
+
+	/** Chunk containing a world column, or null when it is not streamed in. */
+	AChunkActor* FindChunkAt(int32 WorldX, int32 WorldY) const;
+
+	/** Voxel metadata of a world voxel, 0 when the chunk is not loaded. */
+	uint8 GetBlockMetaAt(int32 WorldX, int32 WorldY, int32 WorldZ) const;
+
+	/** `BreakBlockAtVoxel` body; `bPlayerInitiated` gates tool durability consumption. */
+	bool BreakBlockAtVoxelInternal(int32 VoxelX, int32 VoxelY, int32 VoxelZ, uint8& OutDroppedBlockID, bool bPlayerInitiated);
+
+	// ==================== CAVE PASS ====================
+
+	/** Per-biome cave density, resolved from `CaveProfileTable` on the game thread. */
+	TMap<EBiomeType, FCaveBiomeProfile> CaveProfileCache;
+
+	/** Resolves `CaveProfileTable` into `CaveProfileCache` so the worker thread never touches a UObject. */
+	void RebuildCaveProfileCache();
+
+	/** Biome profile of a biome, falling back to `FCaveRules::GetDefaultProfile`. */
+	const FCaveBiomeProfile& GetCaveProfile(EBiomeType Biome) const;
+
+	/**
+	 * Carves the archetypes (A-D) of the cave pass into a chunk under generation.
+	 *
+	 * Runs on the generation worker: it reads `Noise`, `CaveParams` and `CaveProfileCache` (all
+	 * immutable during generation) and writes through `AChunkActor::SetBlockGenerated`. It must
+	 * never touch a UObject, a world query or a member scratch buffer shared with another chunk.
+	 *
+	 * @param ColumnBiome  Flat `[X * CHUNK_SIZE_Y + Y]` biome grid of the chunk.
+	 * @param ColumnHeight Flat `[X * CHUNK_SIZE_Y + Y]` terrain height grid of the chunk.
+	 */
+	void CarveCaves(
+		AChunkActor* Chunk,
+		const FChunkCoord& Coord,
+		const EBiomeType* ColumnBiome,
+		const int32* ColumnHeight);
+
+	/** Carves the single sinkhole entrance of a chunk, if the chunk won the candidate roll. */
+	void TryCarveCaveEntrance(
+		AChunkActor* Chunk,
+		const FChunkCoord& Coord,
+		const EBiomeType* ColumnBiome,
+		const int32* ColumnHeight);
+
+	/** Writes mineshaft timber, torches and barrels, and dungeon shells and loot. */
+	void CarveCaveStructures(
+		AChunkActor* Chunk,
+		const FChunkCoord& Coord,
+		const EBiomeType* ColumnBiome,
+		const int32* ColumnHeight);
+
+	/**
+	 * Records the carving archetype of a voxel in `AChunkActor::CaveTag`, when tagging is on.
+	 *
+	 * `CaveTag` is a plain `TArray<uint8>`, not a reflected property, and the chunk under
+	 * generation is owned exclusively by the generation pass — exactly the same contract as
+	 * `SetBlockGenerated`/`PendingBlockData`. That is what keeps this call legal on the worker.
+	 */
+	void TagCaveVoxel(AChunkActor* Chunk, int32 LocalX, int32 LocalY, int32 LocalZ, ECaveArchetype Archetype) const;
+
 
 	/** Tracked strike normal and impact point for directional Chaos destruction debris */
 	FVector LastTargetedHitNormal = FVector::UpVector;

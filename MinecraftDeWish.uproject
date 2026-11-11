@@ -26,6 +26,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "StateTree",
+			"Enabled": true
+		},
+		{
 			"Name": "EngineWire",
 			"Enabled": true,
 			"TargetAllowList": [

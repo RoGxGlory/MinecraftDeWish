@@ -1,0 +1,15 @@
+{
+  "ctrl_type": "<class 'AnimationDataController'>",
+  "ctrl_props": [],
+  "ctrl_methods": [
+    "add_attribute",
+    "add_bone_curve",
+    "add_bone_track",
+    "add_curve",
+    "find_or_add_curve_names_on_skeleton",
+    "insert_bone_track",
+    "remove_all_bone_tracks",
+    "remove_bone_track",
+    "set_bone_track_keys"
+  ]
+}

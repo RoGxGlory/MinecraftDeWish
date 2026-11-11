@@ -221,18 +221,39 @@ Player health and progression manager.
 ---
 
 ### 9. `UDayNightCycleSystem` (`UActorComponent`)
-Manages planetary daylight progression and sunlight calculations.
+Manages planetary daylight progression, sunlight calculations and the weather state machine
+(Clear, Overcast, Rain, Fog, Ash Storm). See `design/gdd/weather-system.md` and ADR-0016.
 
 - **Properties**:
   - `CycleDurationSeconds = 1200.0f` (20 minutes)
   - `TimeOfDay` in $[0.0, 1.0)$
   - `SunLightActor`: Reference to Directional Light actor rotated with the sun.
+  - Weather tuning knobs: `WeatherTransitionDuration`, `FogDensityMax`, `AshStormProbability`,
+    `ClearSkyProbability`, `RainParticleRate`, `AshParticleRate`, `MobAggressionFogMultiplier`,
+    `MinWeatherDurationSeconds`.
+  - Runtime state: `CurrentWeather`, `TargetWeather`, `bWeatherTransitioning`,
+    `WeatherTransitionAlpha`, `WeatherTimeRemaining`, and interpolated `CurrentFogDensity`,
+    `CurrentAmbientLightFactor`, `CurrentSurfaceWetness`, `CurrentMobSpawnRateMultiplier`,
+    `CurrentMobAggressionMultiplier`.
 - **Key Functions**:
-  - `bool IsDay() const`: True if `TimeOfDay` $\in [0.0, 0.5)$.
-  - `bool IsNight() const`: True if `TimeOfDay` $\in [0.5, 1.0)$.
-  - `float GetSkyLightIntensity() const`: Returns daylight factor $[0.0 - 1.0]$.
+  - `bool IsDay() const` / `bool IsNight() const`
+  - `float GetSkyLightIntensity() const`: Returns daylight factor $[0.0 - 1.0]$ (weather-modulated).
   - `float GetSunPitchAngle() const`: Calculates sun pitch in degrees.
   - `FString GetTimeString() const`: Formatted clock string (e.g., "Day 2, 14:30").
+  - `EWeatherState GetWeatherState()` / `GetTargetWeatherState()`
+  - `float GetFogDensity()`, `GetAmbientLightFactor()`, `GetSurfaceWetness()`
+  - `float GetMobSpawnRateMultiplier()`, `GetMobAggressionMultiplier()`
+  - `float GetVisibilityBlocks()`
+  - `void SetWeather(EWeatherState, bool bImmediate)`
+  - `FWeatherStateParams GetWeatherParams(EWeatherState)`
+  - `void SaveWeatherState(...)` / `void LoadWeatherState(...)`
+- **Delegates**:
+  - `OnTimeChanged(TimeOfDay, bIsDay)`
+  - `OnWeatherChanged(NewWeather, OldWeather)`
+  - `OnWeatherTransitionStarted(FromWeather, ToWeather, Duration)`
+  - `OnFogDensityChanged(FogDensity)`
+- **Effects**: manages a `UPostProcessComponent` (fog), and `UNiagaraComponent`s for rain/ash
+  (created at runtime from soft refs `FogPostProcessMaterial`, `RainNiagaraSystem`, `AshNiagaraSystem`).
 
 ---
 
@@ -246,7 +267,8 @@ Handles hostile creature life cycles and ecological density.
   - `TorchLightRadius = 5` blocks
 - **Key Functions**:
   - `int32 CalculateLightLevel(const FIntVector& VoxelPos) const`: Combines torch proximity with sky exposure to compute 0–15 light level.
-  - `AMobCharacter* SpawnMob(EMobType MobType, const FVector& Location)`: Instantiates mob actor with type definition.
+  - `AMobCharacter* SpawnMob(TSubclassOf<AMobCharacter> MobClass, const FVector& Location)`: Instantiates mob from a Blueprint class (BP_Mob_*) resolved via DT_Mobs / `MobClasses`.
+  - `AMobCharacter* SpawnMobByType(EMobType MobType, const FVector& Location)`: Legacy fallback (deprecated).
   - `ProcessSpawnCycle()`: Spawns mobs in dark areas (light level $< 7$) on valid solid surfaces.
   - `ProcessDespawn()`: Cleans up mobs further than 128m from the player.
 
@@ -254,6 +276,10 @@ Handles hostile creature life cycles and ecological density.
 
 ### 11. `AMobCharacter` (`ACharacter`)
 Autonomous hostile creature pawn.
+
+> ADR-0009: `bCanEverTick = false`. Sunlight burn runs on a 1.0s timer;
+> AI/spider-climb/anim-state run on a 10 Hz timer. Behavior decisions are
+> intended to move to a StateTree (`ST_Mob_Behavior`) via an AIController.
 
 - **Mob Types**: `Zombie`, `Skeleton`, `Spider`, `Creeper`.
 - **Key Functions**:

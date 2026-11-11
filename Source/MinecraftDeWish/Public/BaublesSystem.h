@@ -2,14 +2,19 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "TimerManager.h"
 #include "ToolTypes.h"
+#include "ToolData.h"
 #include "BaublesSystem.generated.h"
 
 /** Delegate fired when a tool is equipped or unequipped */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnToolSlotChanged, EToolType, SlotType, const FToolInstance&, ToolData);
 
-/** Delegate fired when the baubles UI should toggle open/close */
+/** Delegate fired when a tool is equipped or unequipped */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnBaublesToggled, bool, bIsOpen);
+
+/** Delegate fired when the auto-selected active tool changes (ADR-0006). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnActiveToolChanged, EToolType, NewToolType);
 
 /**
  * UBaublesSystem
@@ -55,6 +60,18 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Baubles|State")
 	bool bIsBaublesOpen = false;
 
+	/** Currently auto-selected active tool (ADR-0006). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Baubles|State")
+	EToolType ActiveToolType = EToolType::None;
+
+	/** Anti-bounce delay (seconds) before committing an auto-tool change. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Baubles|AutoSelect", meta = (ClampMin = "0.1", ClampMax = "0.5"))
+	float AutoSelectAntiBounceSeconds = 0.175f;
+
+	/** Data-driven tool definitions (DT_Tools wrapper). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Baubles|Data")
+	TObjectPtr<UToolDefinition> ToolDefinition;
+
 	// ==================== EVENTS ====================
 
 	UPROPERTY(BlueprintAssignable, Category = "Baubles|Events")
@@ -66,6 +83,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Baubles|Events")
 	FOnBaublesToggled OnBaublesToggled;
 
+	/** Fired when the auto-selected active tool changes (anti-bounced). */
+	UPROPERTY(BlueprintAssignable, Category = "Baubles|Events")
+	FOnActiveToolChanged OnActiveToolChanged;
+
 	// ==================== TOOL MANAGEMENT ====================
 
 	/**
@@ -75,6 +96,18 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Baubles")
 	bool EquipTool(const FToolInstance& Tool);
+
+	/**
+	 * Equips a tool from a stable ToolId (resolves static data via ToolDefinition).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Baubles")
+	bool EquipToolFromToolId(FName ToolId);
+
+	/**
+	 * Equips a tool from (type, tier) (resolves static data via ToolDefinition).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Baubles")
+	bool EquipToolFromTypeTier(EToolType ToolType, EToolTier ToolTier);
 
 	/**
 	 * Removes the tool from its type-specific slot.
@@ -94,6 +127,31 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Baubles")
 	bool HasToolEquipped(EToolType SlotType) const;
+
+	// ==================== AUTO-TOOL SELECTION (ADR-0006) ====================
+
+	/**
+	 * Requests an auto-tool selection for the given candidate tool type.
+	 * The change is committed only after AutoSelectAntiBounceSeconds of stability.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Baubles|AutoSelect")
+	void RequestAutoToolSelection(EToolType CandidateToolType);
+
+	/** Forces an immediate commit of the pending auto-tool selection (if any). */
+	UFUNCTION(BlueprintCallable, Category = "Baubles|AutoSelect")
+	void CommitAutoToolSelection();
+
+	/** Cancels any pending auto-tool selection. */
+	UFUNCTION(BlueprintCallable, Category = "Baubles|AutoSelect")
+	void CancelAutoToolSelection();
+
+	/** Returns the currently active (auto-selected) tool type. */
+	UFUNCTION(BlueprintPure, Category = "Baubles|AutoSelect")
+	EToolType GetActiveToolType() const { return ActiveToolType; }
+
+	/** Returns the tool instance currently active (from its slot). */
+	UFUNCTION(BlueprintPure, Category = "Baubles|AutoSelect")
+	FToolInstance GetActiveTool() const;
 
 	// ==================== MINING INTEGRATION ====================
 
@@ -142,4 +200,12 @@ private:
 
 	/** Empty default tool for returning const references */
 	static const FToolInstance EmptyTool;
+
+	/** Pending auto-tool candidate during anti-bounce window. */
+	EToolType PendingAutoToolType = EToolType::None;
+	bool bHasPendingAutoTool = false;
+
+	FTimerHandle AutoSelectTimerHandle;
+
+	void CommitPendingAutoTool();
 };

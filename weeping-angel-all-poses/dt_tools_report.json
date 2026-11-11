@@ -1,0 +1,30 @@
+{
+  "rows": [
+    "Pickaxe_Wood",
+    "Pickaxe_Stone",
+    "Pickaxe_Iron",
+    "Pickaxe_Diamond",
+    "Pickaxe_Obsidian",
+    "Shovel_Wood",
+    "Shovel_Stone",
+    "Shovel_Iron",
+    "Shovel_Diamond",
+    "Shovel_Obsidian",
+    "Axe_Wood",
+    "Axe_Stone",
+    "Axe_Iron",
+    "Axe_Diamond",
+    "Axe_Obsidian",
+    "Hoe_Wood",
+    "Hoe_Stone",
+    "Hoe_Iron",
+    "Hoe_Diamond",
+    "Hoe_Obsidian",
+    "Sword_Wood",
+    "Sword_Stone",
+    "Sword_Iron",
+    "Sword_Diamond",
+    "Sword_Obsidian"
+  ],
+  "errors": []
+}

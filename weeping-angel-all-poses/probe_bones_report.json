@@ -1,0 +1,17 @@
+{
+  "methods": [
+    "copy_bones_from_skeleton",
+    "get_curve_meta_data_names",
+    "get_fname",
+    "get_full_name",
+    "get_name",
+    "get_path_name",
+    "get_reference_pose",
+    "rename",
+    "rename_curve_meta_data"
+  ],
+  "ref_skel_err": "'Skeleton' object has no attribute 'get_reference_skeleton'",
+  "idx_hand_r": "None",
+  "idx_Hand_R": "None",
+  "idx_lowerarm_r": "None"
+}

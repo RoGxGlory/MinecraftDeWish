@@ -1,0 +1,14 @@
+{
+  "children_of_hand_l": [
+    "hand_l_end"
+  ],
+  "children_of_hand_r": [
+    "weapon_r"
+  ],
+  "children_of_lowerarm_r": [
+    "hand_r"
+  ],
+  "children_of_clavicle_r": [
+    "upperarm_r"
+  ]
+}

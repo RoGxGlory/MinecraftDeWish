@@ -1,0 +1,35 @@
+{
+  "wired": [
+    {
+      "montage": "M_Swing_Pickaxe",
+      "anim": "A_Tool_Swing_Pickaxe",
+      "length": 1.2999999523162842,
+      "segments": 1
+    },
+    {
+      "montage": "M_Swing_Shovel",
+      "anim": "A_Tool_Swing_Shovel",
+      "length": 1.2999999523162842,
+      "segments": 1
+    },
+    {
+      "montage": "M_Swing_Axe",
+      "anim": "A_Tool_Swing_Axe",
+      "length": 1.2999999523162842,
+      "segments": 1
+    },
+    {
+      "montage": "M_Swing_Hoe",
+      "anim": "A_Tool_Swing_Hoe",
+      "length": 1.2999999523162842,
+      "segments": 1
+    },
+    {
+      "montage": "M_Swing_Sword",
+      "anim": "A_Tool_Swing_Sword",
+      "length": 1.2999999523162842,
+      "segments": 1
+    }
+  ],
+  "errors": []
+}

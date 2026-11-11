@@ -1,0 +1,9 @@
+{
+  "rowstruct_err": "DataTable: Property 'RowStruct' for attribute 'row_struct' on 'DataTable' is read-only and cannot be set",
+  "json_str": "[{\"Name\": \"Pickaxe_Wood\", \"ToolType\": \"Pickaxe\", \"ToolTier\": \"Wood\", \"BaseMiningForce\": 2.0, \"DurabilityMax\": 59, \"AttackDamage\": 1.0, \"MeshPath\": \"/Game/Tools/SM_Tool_Pickaxe_Wood.SM_Tool_Pickaxe_Wood\", \"IconPath\": null, \"SwingMontage\": null, \"ImpactCue\": \"Impact_Pickaxe\", \"MiningForceByBlockCategory\": {}}]",
+  "fill_result": "True",
+  "row_names": [
+    "Pickaxe_Wood"
+  ],
+  "exported": "[\r\n\t{\r\n\t\t\"Name\": \"Pickaxe_Wood\",\r\n\t\t\"ToolType\": \"Pickaxe\",\r\n\t\t\"ToolTier\": \"Wood\",\r\n\t\t\"BaseMiningForce\": 2,\r\n\t\t\"DurabilityMax\": 59,\r\n\t\t\"AttackDamage\": 1,\r\n\t\t\"MeshPath\": \"/Game/Tools/SM_Tool_Pickaxe_Wood.SM_Tool_Pickaxe_Wood\",\r\n\t\t\"IconPath\": \"None\",\r\n\t\t\"SwingMontage\": \"None\",\r\n\t\t\"ImpactCue\": \"Impact_Pickaxe\",\r\n\t\t\"MiningForceByBlockCategory\":\r\n\t\t{\r\n\t\t}\r\n\t}\r\n]"
+}

@@ -4,6 +4,8 @@
 #include "VoxelDataTypes.h"
 #include "ToolTypes.generated.h"
 
+class UToolDefinition;
+
 class UTexture2D;
 
 /**
@@ -33,6 +35,9 @@ struct MINECRAFTDEWISH_API FToolInstance
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tool")
+	FName ToolId = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tool")
 	EToolType ToolType = EToolType::None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tool")
@@ -44,23 +49,19 @@ struct MINECRAFTDEWISH_API FToolInstance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tool")
 	int32 MaxDurability = 0;
 
+	/** Stable GUID for save data (ADR-0007). Never serialized as array index. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tool")
+	FGuid InstanceId;
+
 	FToolInstance() = default;
 
-	FToolInstance(EToolType InType, EToolTier InTier)
-		: ToolType(InType), ToolTier(InTier)
-	{
-		MaxDurability = CalculateMaxDurability(InTier);
-		CurrentDurability = MaxDurability;
-	}
+	FToolInstance(EToolType InType, EToolTier InTier);
 
 	bool IsValid() const { return ToolType != EToolType::None && ToolTier != EToolTier::None; }
 	bool IsBroken() const { return CurrentDurability <= 0; }
 
-	/** Returns base mining force for this tool's tier */
-	float GetBaseMiningForce() const
-	{
-		return CalculateMiningForce(ToolTier);
-	}
+	/** Returns base mining force for this tool (data-driven via UToolDefinition when available). */
+	float GetBaseMiningForce(const UToolDefinition* Definition = nullptr) const;
 
 	/** Calculate base mining force based on tool tier */
 	static float CalculateMiningForce(EToolTier Tier)
@@ -81,42 +82,25 @@ struct MINECRAFTDEWISH_API FToolInstance
 	 * Tools used on their specialized block type get full force.
 	 * Tools used on non-specialized blocks get 1.0 (hand speed).
 	 */
-	float GetEffectiveMiningForce(uint8 BlockID) const
-	{
-		if (!IsValid() || IsBroken())
-		{
-			return 1.0f; // Hand speed
-		}
+	float GetEffectiveMiningForce(uint8 BlockID, const UToolDefinition* Definition = nullptr) const;
 
-		// Check if this tool type matches the block's preferred tool
-		const uint8 PreferredTool = FBlockHelpers::GetPreferredToolType(BlockID);
-		if (PreferredTool == 0 || PreferredTool == static_cast<uint8>(ToolType))
-		{
-			return GetBaseMiningForce();
-		}
+	/** Returns combat damage for this tool (data-driven via UToolDefinition when available). */
+	float GetAttackDamage(const UToolDefinition* Definition = nullptr) const;
 
-		// Wrong tool type: reduced effectiveness (hand speed)
-		return 1.0f;
-	}
+	/** Resolves MaxDurability from the definition (falls back to CalculateMaxDurability). */
+	int32 ResolveMaxDurability(const UToolDefinition* Definition = nullptr) const;
 
-	/** Returns combat damage bonus for swords */
-	float GetAttackDamage() const
-	{
-		if (ToolType != EToolType::Sword || IsBroken())
-		{
-			return 1.0f; // Fist damage
-		}
+	/** Soft mesh reference resolved from the definition. */
+	TSoftObjectPtr<UStaticMesh> GetMesh(const UToolDefinition* Definition = nullptr) const;
 
-		switch (ToolTier)
-		{
-		case EToolTier::Wood:     return 4.0f;
-		case EToolTier::Stone:    return 5.0f;
-		case EToolTier::Iron:     return 6.0f;
-		case EToolTier::Diamond:  return 7.0f;
-		case EToolTier::Obsidian: return 8.0f;
-		default:                  return 1.0f;
-		}
-	}
+	/** Soft icon texture reference resolved from the definition. */
+	TSoftObjectPtr<UTexture2D> GetIcon(const UToolDefinition* Definition = nullptr) const;
+
+	/** Soft swing montage reference resolved from the definition. */
+	TSoftObjectPtr<UAnimMontage> GetSwingMontage(const UToolDefinition* Definition = nullptr) const;
+
+	/** Impact cue name resolved from the definition. */
+	FName GetImpactCue(const UToolDefinition* Definition = nullptr) const;
 
 	/** Reduces durability by 1 use. Returns true if tool broke. */
 	bool ConsumeDurability(int32 Amount = 1)

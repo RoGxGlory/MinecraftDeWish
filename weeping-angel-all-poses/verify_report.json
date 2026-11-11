@@ -1,0 +1,41 @@
+{
+  "assets": [
+    "/Game/Data/Block_DataTable.Block_DataTable",
+    "/Game/Data/DA_ToolDefinition.DA_ToolDefinition",
+    "/Game/Data/DT_Mobs.DT_Mobs",
+    "/Game/Data/DT_Tools.DT_Tools",
+    "/Game/Data/DT_Tools_Probe.DT_Tools_Probe",
+    "/Game/Data/S_Block_Data.S_Block_Data",
+    "/Game/Data/S_ChunkData.S_ChunkData"
+  ],
+  "DT_loaded": "<Object '/Game/Data/DT_Tools.DT_Tools' (0x0000019415062A00) Class 'DataTable'>",
+  "DA_loaded": "<Object '/Game/Data/DA_ToolDefinition.DA_ToolDefinition' (0x0000019411FA5040) Class 'ToolDefinition'>",
+  "DT_rows": [
+    "Pickaxe_Wood",
+    "Pickaxe_Stone",
+    "Pickaxe_Iron",
+    "Pickaxe_Diamond",
+    "Pickaxe_Obsidian",
+    "Shovel_Wood",
+    "Shovel_Stone",
+    "Shovel_Iron",
+    "Shovel_Diamond",
+    "Shovel_Obsidian",
+    "Axe_Wood",
+    "Axe_Stone",
+    "Axe_Iron",
+    "Axe_Diamond",
+    "Axe_Obsidian",
+    "Hoe_Wood",
+    "Hoe_Stone",
+    "Hoe_Iron",
+    "Hoe_Diamond",
+    "Hoe_Obsidian",
+    "Sword_Wood",
+    "Sword_Stone",
+    "Sword_Iron",
+    "Sword_Diamond",
+    "Sword_Obsidian"
+  ],
+  "DA_tools_table": "<Object '/Game/Data/DT_Tools.DT_Tools' (0x0000019415062A00) Class 'DataTable'>"
+}

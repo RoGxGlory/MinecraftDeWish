@@ -1,0 +1,22 @@
+{
+  "attempts": [
+    [
+      [
+        "hand_r"
+      ],
+      "set_socket_parent() required argument 'bone_name' (pos 2) not found"
+    ],
+    [
+      [
+        "hand_r",
+        "hand_r"
+      ],
+      "SkeletalMeshSocket: Failed to convert parameter 'skeletal_mesh' when calling function 'SkeletalMeshSocket.SetSocketParent' on 'weapon_r'\n  TypeError: NativizeProperty: Cannot nativize 'str' as 'InSkel"
+    ],
+    [
+      "skm,hand_r",
+      "OK"
+    ]
+  ],
+  "add_socket": "OK"
+}

@@ -1,0 +1,270 @@
+{
+  "textures": [
+    {
+      "name": "T_Block_ConcreteCracked_BC",
+      "path": "/Game/Textures/Blocks/T_Block_ConcreteCracked_BC"
+    },
+    {
+      "name": "T_Block_ConcreteCracked_N",
+      "path": "/Game/Textures/Blocks/T_Block_ConcreteCracked_N"
+    },
+    {
+      "name": "T_Block_ConcreteCracked_S",
+      "path": "/Game/Textures/Blocks/T_Block_ConcreteCracked_S"
+    },
+    {
+      "name": "T_Block_MossyStone_BC",
+      "path": "/Game/Textures/Blocks/T_Block_MossyStone_BC"
+    },
+    {
+      "name": "T_Block_MossyStone_N",
+      "path": "/Game/Textures/Blocks/T_Block_MossyStone_N"
+    },
+    {
+      "name": "T_Block_MossyStone_S",
+      "path": "/Game/Textures/Blocks/T_Block_MossyStone_S"
+    },
+    {
+      "name": "T_Block_SootedBrick_BC",
+      "path": "/Game/Textures/Blocks/T_Block_SootedBrick_BC"
+    },
+    {
+      "name": "T_Block_SootedBrick_N",
+      "path": "/Game/Textures/Blocks/T_Block_SootedBrick_N"
+    },
+    {
+      "name": "T_Block_SootedBrick_S",
+      "path": "/Game/Textures/Blocks/T_Block_SootedBrick_S"
+    },
+    {
+      "name": "T_Block_ScorchedWood_BC",
+      "path": "/Game/Textures/Blocks/T_Block_ScorchedWood_BC"
+    },
+    {
+      "name": "T_Block_ScorchedWood_N",
+      "path": "/Game/Textures/Blocks/T_Block_ScorchedWood_N"
+    },
+    {
+      "name": "T_Block_ScorchedWood_S",
+      "path": "/Game/Textures/Blocks/T_Block_ScorchedWood_S"
+    },
+    {
+      "name": "T_Prop_Torch_BC",
+      "path": "/Game/Textures/Props/T_Prop_Torch_BC"
+    },
+    {
+      "name": "T_Prop_Torch_N",
+      "path": "/Game/Textures/Props/T_Prop_Torch_N"
+    },
+    {
+      "name": "T_Prop_Torch_S",
+      "path": "/Game/Textures/Props/T_Prop_Torch_S"
+    },
+    {
+      "name": "T_Prop_Crate_BC",
+      "path": "/Game/Textures/Props/T_Prop_Crate_BC"
+    },
+    {
+      "name": "T_Prop_Crate_N",
+      "path": "/Game/Textures/Props/T_Prop_Crate_N"
+    },
+    {
+      "name": "T_Prop_Crate_S",
+      "path": "/Game/Textures/Props/T_Prop_Crate_S"
+    },
+    {
+      "name": "T_Prop_Barrel_BC",
+      "path": "/Game/Textures/Props/T_Prop_Barrel_BC"
+    },
+    {
+      "name": "T_Prop_Barrel_N",
+      "path": "/Game/Textures/Props/T_Prop_Barrel_N"
+    },
+    {
+      "name": "T_Prop_Barrel_S",
+      "path": "/Game/Textures/Props/T_Prop_Barrel_S"
+    },
+    {
+      "name": "T_Tool_Pickaxe_Wood_BC",
+      "path": "/Game/Textures/Tools/T_Tool_Pickaxe_Wood_BC"
+    },
+    {
+      "name": "T_Tool_Pickaxe_Wood_N",
+      "path": "/Game/Textures/Tools/T_Tool_Pickaxe_Wood_N"
+    },
+    {
+      "name": "T_Tool_Pickaxe_Wood_S",
+      "path": "/Game/Textures/Tools/T_Tool_Pickaxe_Wood_S"
+    }
+  ],
+  "materials": [
+    {
+      "name": "M_Item_PBR",
+      "path": "/Game/Materials/M_Item_PBR2",
+      "role": "master"
+    },
+    {
+      "name": "MI_Block_ConcreteCracked",
+      "path": "/Game/Materials/MI_Block_ConcreteCracked",
+      "role": "instance"
+    },
+    {
+      "name": "MI_Block_MossyStone",
+      "path": "/Game/Materials/MI_Block_MossyStone",
+      "role": "instance"
+    },
+    {
+      "name": "MI_Block_SootedBrick",
+      "path": "/Game/Materials/MI_Block_SootedBrick",
+      "role": "instance"
+    },
+    {
+      "name": "MI_Block_ScorchedWood",
+      "path": "/Game/Materials/MI_Block_ScorchedWood",
+      "role": "instance"
+    },
+    {
+      "name": "MI_Prop_Torch",
+      "path": "/Game/Materials/MI_Prop_Torch",
+      "role": "instance"
+    },
+    {
+      "name": "MI_Prop_Crate",
+      "path": "/Game/Materials/MI_Prop_Crate",
+      "role": "instance"
+    },
+    {
+      "name": "MI_Prop_Barrel",
+      "path": "/Game/Materials/MI_Prop_Barrel",
+      "role": "instance"
+    },
+    {
+      "name": "MI_Tool_Pickaxe_Wood",
+      "path": "/Game/Materials/MI_Tool_Pickaxe_Wood",
+      "role": "instance"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "SM_Block_ConcreteCracked",
+      "path": "/Game/Blocks/Ruins/SM_Block_ConcreteCracked",
+      "import_file": "SM_Block_ConcreteCracked.fbx",
+      "size_cm": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -0.5,
+        -0.5,
+        -0.0
+      ]
+    },
+    {
+      "name": "SM_Block_MossyStone",
+      "path": "/Game/Blocks/Ruins/SM_Block_MossyStone",
+      "import_file": "SM_Block_MossyStone.fbx",
+      "size_cm": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -0.5,
+        -0.5,
+        -0.0
+      ]
+    },
+    {
+      "name": "SM_Block_SootedBrick",
+      "path": "/Game/Blocks/Ruins/SM_Block_SootedBrick",
+      "import_file": "SM_Block_SootedBrick.fbx",
+      "size_cm": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -0.5,
+        -0.5,
+        -0.0
+      ]
+    },
+    {
+      "name": "SM_Block_ScorchedWood",
+      "path": "/Game/Blocks/Ruins/SM_Block_ScorchedWood",
+      "import_file": "SM_Block_ScorchedWood.fbx",
+      "size_cm": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -0.5,
+        -0.5,
+        -0.0
+      ]
+    },
+    {
+      "name": "SM_Prop_Torch",
+      "path": "/Game/Props/SM_Prop_Torch",
+      "import_file": "SM_Prop_Torch.fbx",
+      "size_cm": [
+        0.18,
+        0.18,
+        1.14
+      ],
+      "min": [
+        -0.09,
+        -0.09,
+        0.0
+      ]
+    },
+    {
+      "name": "SM_Prop_Crate",
+      "path": "/Game/Props/SM_Prop_Crate",
+      "import_file": "SM_Prop_Crate.fbx",
+      "size_cm": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -0.5,
+        -0.5,
+        -0.0
+      ]
+    },
+    {
+      "name": "SM_Prop_Barrel",
+      "path": "/Game/Props/SM_Prop_Barrel",
+      "import_file": "SM_Prop_Barrel.fbx",
+      "size_cm": [
+        0.6,
+        0.6,
+        1.0
+      ],
+      "min": [
+        -0.3,
+        -0.3,
+        0.0
+      ]
+    },
+    {
+      "name": "SM_Tool_Pickaxe_Wood",
+      "path": "/Game/Tools/SM_Tool_Pickaxe_Wood",
+      "import_file": "SM_Tool_Pickaxe_Wood.fbx",
+      "size_cm": [
+        0.35,
+        0.08,
+        1.01
+      ],
+      "min": [
+        -0.17,
+        -0.04,
+        -0.1
+      ]
+    }
+  ],
+  "errors": []
+}

@@ -40,6 +40,7 @@ public:
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
 	/** Builds the widget tree once. RebuildWidget() calls it on first construction. */
@@ -65,8 +66,32 @@ private:
 	UFUNCTION() void HandleBackClicked();
 	UFUNCTION() void HandleEntryHovered();
 
+	/** Tuning: pitch (degrees) the angel arm should point at for each menu entry,
+	 *  in the same order as EntryButtons. Editable in the widget class defaults. */
+	UPROPERTY(EditAnywhere, Category = "Menu|Angel")
+	TArray<float> AngelEntryPitches;
+
+	/** Tuning: how fast the arm lerps toward its target pitch (units/sec). */
+	UPROPERTY(EditAnywhere, Category = "Menu|Angel")
+	float AngelInterpSpeed = 8.f;
+
+	/** Cached pointing actor (the weeping angel's right arm BP). */
+	UPROPERTY(Transient)
+	TObjectPtr<class AActor> CachedAngelArm = nullptr;
+
+	/** Current (lerped) pitch of the angel arm. */
+	float CurrentAngelPitch = 0.f;
+
+	/** Whether we have tried to resolve the angel arm actor. */
+	bool bAngelArmResolved = false;
+
 	/** Returns true if at least one saved world directory exists. */
 	bool HasSavedWorlds() const;
+
+	/** Index (in EntryButtons) of the currently hovered or focused entry, or the
+	 *  first visible one when none is active. Exposed for the menu's pointing actor. */
+	UFUNCTION(BlueprintPure, Category = "Menu")
+	int32 GetActiveEntryIndex() const;
 
 	UPROPERTY() TArray<TObjectPtr<class UButton>> EntryButtons;
 	UPROPERTY() TObjectPtr<class UVerticalBox> Column;

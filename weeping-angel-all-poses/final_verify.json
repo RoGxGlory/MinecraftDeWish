@@ -1,0 +1,122 @@
+{
+  "SM_WeepingAngel_Point": {
+    "size_cm": [
+      98.7,
+      125.4,
+      188.6
+    ],
+    "min_z": -0.3,
+    "max_z": 188.3,
+    "materials": [
+      "M_WeepingAngel_Body",
+      "M_WeepingAngel_Face",
+      "M_WeepingAngel_Wings"
+    ],
+    "nanite": true
+  },
+  "SM_WeepingAngel_Idle": {
+    "size_cm": [
+      99.2,
+      81.3,
+      196.5
+    ],
+    "min_z": -0.3,
+    "max_z": 196.2,
+    "materials": [
+      "M_WeepingAngel_Body",
+      "M_WeepingAngel_Face",
+      "M_WeepingAngel_Wings"
+    ],
+    "nanite": true
+  },
+  "SM_WeepingAngel_Attack": {
+    "size_cm": [
+      98.8,
+      90.3,
+      191.8
+    ],
+    "min_z": -1.3,
+    "max_z": 190.6,
+    "materials": [
+      "M_WeepingAngel_Body",
+      "M_WeepingAngel_Face",
+      "M_WeepingAngel_Wings"
+    ],
+    "nanite": true
+  },
+  "SM_WeepingAngel_HeadTurned": {
+    "size_cm": [
+      99.4,
+      81.3,
+      188.5
+    ],
+    "min_z": -0.5,
+    "max_z": 188.1,
+    "materials": [
+      "M_WeepingAngel_Body",
+      "M_WeepingAngel_Face",
+      "M_WeepingAngel_Wings"
+    ],
+    "nanite": true
+  },
+  "SM_WeepingAngel_HandsOnFace": {
+    "size_cm": [
+      99.5,
+      102.0,
+      185.8
+    ],
+    "min_z": -1.1,
+    "max_z": 184.8,
+    "materials": [
+      "M_WeepingAngel_Body",
+      "M_WeepingAngel_Face",
+      "M_WeepingAngel_Wings"
+    ],
+    "nanite": true
+  },
+  "SM_WeepingAngel_MidStride": {
+    "size_cm": [
+      100.1,
+      125.5,
+      191.1
+    ],
+    "min_z": -0.7,
+    "max_z": 190.4,
+    "materials": [
+      "M_WeepingAngel_Body",
+      "M_WeepingAngel_Face",
+      "M_WeepingAngel_Wings"
+    ],
+    "nanite": true
+  },
+  "SM_WeepingAngel_Crouched": {
+    "size_cm": [
+      124.2,
+      80.8,
+      120.7
+    ],
+    "min_z": -0.2,
+    "max_z": 120.5,
+    "materials": [
+      "M_WeepingAngel_Body",
+      "M_WeepingAngel_Face",
+      "M_WeepingAngel_Wings"
+    ],
+    "nanite": true
+  },
+  "SM_WeepingAngel_WingsHalfOpen": {
+    "size_cm": [
+      154.4,
+      81.3,
+      194.7
+    ],
+    "min_z": -0.5,
+    "max_z": 194.2,
+    "materials": [
+      "M_WeepingAngel_Body",
+      "M_WeepingAngel_Face",
+      "M_WeepingAngel_Wings"
+    ],
+    "nanite": true
+  }
+}

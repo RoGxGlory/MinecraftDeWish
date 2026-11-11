@@ -27,6 +27,9 @@ protected:
 	UFUNCTION()
 	void HandleInventoryPressed();
 
+	UFUNCTION()
+	void HandlePlacePressed();
+
 	void ShowInventory();
 	void HideInventory();
 

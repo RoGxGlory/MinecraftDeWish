@@ -10,6 +10,7 @@ language. Code, identifiers, commit messages, and design docs stay in English.
 ## Technology Stack
 
 - **Engine:** Unreal Engine 5.8 (`EngineAssociation` in `MinecraftDeWish.uproject`)
+- **Engine install (this machine):** `F:\Developpement\UE_5.8` (binaries `F:\Developpement\UE_5.8\Engine\Binaries\Win64`). See `.opencode/docs/technical-preferences.md` → "Unreal Engine Location" for the full path list and the (re)location procedure. UE is NOT under `C:\Program Files\Epic Games\`.
 - **Language:** C++ (primary), Blueprint (content, prototyping, designer-facing tuning)
 - **Module:** `MinecraftDeWish` (Runtime) — `Source/MinecraftDeWish/{Public,Private}`
 - **Plugins enabled:** `ModelingToolsEditorMode`, `GameplayStateTree`

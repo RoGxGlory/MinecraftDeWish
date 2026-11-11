@@ -2,7 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "VoxelDataTypes.h"
+#include "Engine/DataTable.h"
 #include "MobTypes.generated.h"
+
+class AMobCharacter;
 
 /**
  * Hostile mob type identifiers.
@@ -105,7 +108,7 @@ struct MINECRAFTDEWISH_API FMobDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mob|Drops")
 	TArray<FMobDropEntry> Drops;
 
-	/** Create a default mob definition for a given type */
+/** Create a default mob definition for a given type */
 	static FMobDefinition GetDefaultDefinition(EMobType Type)
 	{
 		FMobDefinition Def;
@@ -168,4 +171,20 @@ struct MINECRAFTDEWISH_API FMobDefinition
 
 		return Def;
 	}
+};
+
+/**
+ * DataTable row for DT_Mobs: maps an EMobType to its Blueprint mob class.
+ * Mesh, ABP, stats and loot are carried by the Blueprint CDO / FMobDefinition.
+ */
+USTRUCT(BlueprintType)
+struct MINECRAFTDEWISH_API FMobTableRow : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mob")
+	EMobType MobType = EMobType::Zombie;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mob")
+	TSubclassOf<AMobCharacter> MobClass;
 };

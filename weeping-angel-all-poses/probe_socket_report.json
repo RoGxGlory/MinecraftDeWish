@@ -1,0 +1,9 @@
+{
+  "exists": true,
+  "skm": "<Object '/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple' (0x000002ACAE0A6E00) Class 'SkeletalMesh'> <class 'SkeletalMesh'>",
+  "skeleton": "<Object '/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin' (0x000002ACAE0F0C00) Class 'Skeleton'>",
+  "socket_methods": [],
+  "sockets_attr_err": "'Skeleton' object has no attribute 'sockets'",
+  "sockets_prop_err": "Skeleton: Property 'Sockets' for attribute 'sockets' on 'Skeleton' is protected and cannot be read",
+  "add_socket_err": "SkeletalMeshSocket: Property 'SocketName' for attribute 'socket_name' on 'SkeletalMeshSocket' is read-only and cannot be set"
+}

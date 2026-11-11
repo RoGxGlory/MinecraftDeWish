@@ -22,6 +22,21 @@ Before writing engine API code for this project:
 4. Record any verified 5.8-specific finding in the relevant note so the next session
    does not repeat the research.
 
+## Installed Engine Location (this machine)
+
+- **Install root:** `F:\Developpement\UE_5.8`
+- **Binaries (Win64):** `F:\Developpement\UE_5.8\Engine\Binaries\Win64`
+- **Editor (GUI):** `F:\Developpement\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe`
+- **Editor (CLI):** `F:\Developpement\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe`
+- **Unreal Build Tool:** `F:\Developpement\UE_5.8\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe`
+- **Build script:** `F:\Developpement\UE_5.8\Engine\Build\BatchFiles\Build.bat`
+- **Engine source:** `F:\Developpement\UE_5.8\Engine\Source`
+- **Build.version:** `F:\Developpement\UE_5.8\Engine\Build\Build.version`
+
+UE is **not** under `C:\Program Files\Epic Games\` on this machine (3 drives). If these paths
+fail, follow the (re)location procedure in `.opencode/docs/technical-preferences.md`
+→ "Unreal Engine Location". Never assume the default install location.
+
 ## Verified Sources (check the 5.8 variants)
 
 - Official docs: https://dev.epicgames.com/documentation/en-us/unreal-engine/

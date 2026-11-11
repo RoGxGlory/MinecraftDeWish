@@ -1,17 +1,22 @@
 #include "MobCharacter.h"
+#include "MobAIController.h"
+#include "MobProjectile.h"
 #include "WorldGenerator.h"
 #include "DayNightCycleSystem.h"
 #include "BlockItemPickup.h"
 #include "PlayerVitalSystem.h"
 #include "XPOrbPickup.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/ProjectileMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 
 AMobCharacter::AMobCharacter()
 {
-	PrimaryActorTick.bCanEverTick = true;
+	// ADR-0009: behavior decisions live in AMobAIController + StateTree.
+	PrimaryActorTick.bCanEverTick = false;
+	AIControllerClass = AMobAIController::StaticClass();
 
 	// Configure character movement for voxel world navigation
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
@@ -32,6 +37,73 @@ AMobCharacter::AMobCharacter()
 void AMobCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// ADR-0009: replace Tick with reduced-frequency timers (bCanEverTick = false).
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		// Sunlight burn check every 1.0s
+		World->GetTimerManager().SetTimer(
+			SunlightBurnTimerHandle, this, &AMobCharacter::ProcessSunlightBurningTimer, 1.0f, true);
+
+		// Mob update (AI + spider climb + anim state) at 10 Hz
+		World->GetTimerManager().SetTimer(
+			MobUpdateTimerHandle, this, &AMobCharacter::MobUpdateTimer, 0.1f, true);
+	}
+}
+
+void AMobCharacter::ProcessSunlightBurningTimer()
+{
+	// Accumulate 1.0s of burn per timer fire
+	if (!bIsAlive || !MobDefinition.bBurnsInSunlight)
+	{
+		return;
+	}
+	UDayNightCycleSystem* DayNight = GetDayNightCycle();
+	if (!DayNight || !DayNight->IsDay())
+	{
+		SunBurnAccumulator = 0.0f;
+		return;
+	}
+	// No burning during rain (weather protects mobs, like Minecraft).
+	if (DayNight->GetWeatherState() == static_cast<int32>(EWeatherState::Rain))
+	{
+		SunBurnAccumulator = 0.0f;
+		return;
+	}
+	if (!IsExposedToSky())
+	{
+		SunBurnAccumulator = 0.0f;
+		return;
+	}
+	ApplyMobDamage(1.0f, nullptr);
+}
+
+void AMobCharacter::MobUpdateTimer()
+{
+	if (!bIsAlive)
+	{
+		return;
+	}
+
+	// Spider wall climbing
+	ProcessSpiderClimbing(0.1f);
+
+	// Sync perceived target from the AIController (UAIPerceptionComponent).
+	if (AMobAIController* AIC = Cast<AMobAIController>(GetController()))
+	{
+		CurrentTarget = AIC->GetPerceivedTarget();
+	}
+
+	// AI state machine (reduced frequency) — legacy fallback until StateTree assets are authored.
+	TickAIStateMachine(0.1f);
+
+	// Update animation-facing state for ABP_Mob_Base
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		Speed = MoveComp->Velocity.Size2D();
+		bIsFalling = MoveComp->IsFalling();
+	}
 }
 
 void AMobCharacter::InitializeMob(EMobType InType, AWorldGenerator* InWorldGen)
@@ -192,6 +264,13 @@ void AMobCharacter::ProcessSunlightBurning(float DeltaTime)
 		return;
 	}
 
+	// No burning during rain.
+	if (DayNight->GetWeatherState() == static_cast<int32>(EWeatherState::Rain))
+	{
+		SunBurnAccumulator = 0.0f;
+		return;
+	}
+
 	if (!IsExposedToSky())
 	{
 		SunBurnAccumulator = 0.0f;
@@ -222,7 +301,7 @@ void AMobCharacter::ProcessSpiderClimbing(float DeltaTime)
 	}
 
 	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
-	if (!MoveComp || !MoveComp->IsFalling())
+	if (!MoveComp)
 	{
 		return;
 	}
@@ -238,8 +317,11 @@ void AMobCharacter::ProcessSpiderClimbing(float DeltaTime)
 
 	if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_WorldStatic, Params))
 	{
-		// Wall detected — climb by adding upward velocity
-		MoveComp->Velocity.Z = MobDefinition.MoveSpeed * 0.7f;
+		// Wall detected — climb by adding upward velocity (only while airborne or moving into it).
+		if (MoveComp->IsFalling() || MoveComp->Velocity.Size2D() > 10.0f)
+		{
+			MoveComp->Velocity.Z = MobDefinition.MoveSpeed * 0.7f;
+		}
 	}
 }
 
@@ -261,6 +343,16 @@ APawn* AMobCharacter::FindClosestPlayer() const
 
 void AMobCharacter::TickAIStateMachine(float DeltaTime)
 {
+	// Apply weather aggression multiplier to movement speed
+	if (UDayNightCycleSystem* DayNight = GetDayNightCycle())
+	{
+		WeatherAggressionMultiplier = DayNight->GetMobAggressionMultiplier();
+		if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+		{
+			MoveComp->MaxWalkSpeed = MobDefinition.MoveSpeed * WeatherAggressionMultiplier;
+		}
+	}
+
 	APawn* Target = FindClosestPlayer();
 	const float DistToTarget = Target ? FVector::Dist(GetActorLocation(), Target->GetActorLocation()) : MAX_FLT;
 
@@ -300,6 +392,12 @@ void AMobCharacter::TickAIStateMachine(float DeltaTime)
 			CurrentAIState = EMobAIState::Idle;
 			break;
 		}
+		// Skeleton retreats when the player gets too close.
+		if (MobDefinition.bIsRanged && DistToTarget < 400.0f)
+		{
+			CurrentAIState = EMobAIState::Flee;
+			break;
+		}
 		if (DistToTarget <= MobDefinition.AttackRange)
 		{
 			CurrentAIState = MobDefinition.bExplodes ? EMobAIState::Explode : EMobAIState::Attack;
@@ -314,7 +412,26 @@ void AMobCharacter::TickAIStateMachine(float DeltaTime)
 			CurrentAIState = Target ? EMobAIState::Chase : EMobAIState::Idle;
 			break;
 		}
+		// Ranged mobs keep distance: retreat if the player closes in.
+		if (MobDefinition.bIsRanged && DistToTarget < 400.0f)
+		{
+			CurrentAIState = EMobAIState::Flee;
+			break;
+		}
 		ProcessAttack(DeltaTime, Target);
+		break;
+
+	case EMobAIState::Flee:
+		if (!Target)
+		{
+			CurrentAIState = EMobAIState::Idle;
+			break;
+		}
+		FleeFrom(Target);
+		if (DistToTarget > 600.0f)
+		{
+			CurrentAIState = EMobAIState::Chase;
+		}
 		break;
 
 	case EMobAIState::Explode:
@@ -340,7 +457,7 @@ void AMobCharacter::ProcessWander(float DeltaTime)
 	}
 }
 
-void AMobCharacter::ProcessChase(float DeltaTime, APawn* Target)
+void AMobCharacter::ProcessChase(float DeltaTime, AActor* Target)
 {
 	if (!Target)
 	{
@@ -371,26 +488,59 @@ void AMobCharacter::ProcessChase(float DeltaTime, APawn* Target)
 	}
 }
 
-void AMobCharacter::ProcessAttack(float DeltaTime, APawn* Target)
+void AMobCharacter::ProcessAttack(float DeltaTime, AActor* Target)
 {
 	if (!Target || AttackCooldownTimer > 0.0f)
 	{
 		return;
 	}
 
-	// Deal damage to the player
-	UPlayerVitalSystem* PlayerVitals = Target->FindComponentByClass<UPlayerVitalSystem>();
-	if (PlayerVitals)
+	if (MobDefinition.bIsRanged)
 	{
-		PlayerVitals->ApplyDamage(MobDefinition.AttackDamage, this);
+		// Skeleton ranged attack: spawn an arrow projectile toward the target.
+		const FVector ToTarget = (Target->GetActorLocation() - GetActorLocation());
+		const FVector Dir = ToTarget.GetSafeNormal();
+		const FVector SpawnLoc = GetActorLocation() + Dir * 60.0f + FVector(0.0f, 0.0f, 60.0f);
+		const FRotator SpawnRot = Dir.Rotation();
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.Instigator = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		AMobProjectile* Projectile = GetWorld()->SpawnActor<AMobProjectile>(
+			AMobProjectile::StaticClass(), SpawnLoc, SpawnRot, SpawnParams);
+
+		if (Projectile)
+		{
+			Projectile->Damage = MobDefinition.AttackDamage;
+			if (Projectile->ProjectileMovement)
+			{
+				const float ProjectileSpeed = 2500.0f;
+				Projectile->ProjectileMovement->InitialSpeed = ProjectileSpeed;
+				Projectile->ProjectileMovement->MaxSpeed = ProjectileSpeed;
+				Projectile->ProjectileMovement->Velocity = Dir * ProjectileSpeed;
+			}
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("Mob %s fired a projectile for %.1f damage"), *GetName(), MobDefinition.AttackDamage);
+	}
+	else
+	{
+		// Zombie/Spider melee: damage at contact.
+		UPlayerVitalSystem* PlayerVitals = Target->FindComponentByClass<UPlayerVitalSystem>();
+		if (PlayerVitals)
+		{
+			PlayerVitals->ApplyDamage(MobDefinition.AttackDamage, this);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("Mob %s attacked player for %.1f damage"), *GetName(), MobDefinition.AttackDamage);
 	}
 
 	AttackCooldownTimer = MobDefinition.AttackCooldown;
-
-	UE_LOG(LogTemp, Log, TEXT("Mob %s attacked player for %.1f damage"), *GetName(), MobDefinition.AttackDamage);
 }
 
-void AMobCharacter::ProcessExplosion(float DeltaTime, APawn* Target)
+void AMobCharacter::ProcessExplosion(float DeltaTime, AActor* Target)
 {
 	if (!bFuseActive)
 	{
@@ -457,6 +607,76 @@ void AMobCharacter::ProcessExplosion(float DeltaTime, APawn* Target)
 		SpawnXPOrbs();
 		Destroy();
 	}
+}
+
+// ==================== STATE TREE / BEHAVIOR HELPERS (ADR-0009) ====================
+
+void AMobCharacter::StartPatrol()
+{
+	CurrentAIState = EMobAIState::Wander;
+	WanderTimer = 0.0f;
+	WanderDirection = FVector(FMath::FRandRange(-1.0f, 1.0f), FMath::FRandRange(-1.0f, 1.0f), 0.0f).GetSafeNormal();
+}
+
+void AMobCharacter::ChaseTarget(AActor* Target)
+{
+	if (!Target)
+	{
+		return;
+	}
+	ProcessChase(0.1f, Target);
+}
+
+void AMobCharacter::PerformAttack(AActor* Target)
+{
+	ProcessAttack(0.0f, Target);
+}
+
+void AMobCharacter::FleeFrom(AActor* Threat)
+{
+	if (!Threat)
+	{
+		return;
+	}
+	const FVector Away = (GetActorLocation() - Threat->GetActorLocation()).GetSafeNormal2D();
+	AddMovementInput(Away, 1.0f);
+	SetActorRotation(FRotator(0.0f, Away.Rotation().Yaw, 0.0f));
+	CurrentAIState = EMobAIState::Flee;
+}
+
+void AMobCharacter::StartFuse(AActor* Target)
+{
+	if (!MobDefinition.bExplodes)
+	{
+		return;
+	}
+	if (!bFuseActive)
+	{
+		bFuseActive = true;
+		ExplosionFuseTimer = MobDefinition.ExplosionFuseTime;
+	}
+	CurrentAIState = EMobAIState::Explode;
+}
+
+void AMobCharacter::CancelFuse()
+{
+	bFuseActive = false;
+	ExplosionFuseTimer = 0.0f;
+	CurrentAIState = EMobAIState::Chase;
+}
+
+void AMobCharacter::UpdateFuse(float DeltaTime, AActor* Target)
+{
+	ProcessExplosion(DeltaTime, Target);
+}
+
+AActor* AMobCharacter::GetPerceptionTarget() const
+{
+	if (AMobAIController* AIC = Cast<AMobAIController>(GetController()))
+	{
+		return AIC->GetPerceivedTarget();
+	}
+	return CurrentTarget.Get();
 }
 
 // ==================== DEATH ====================

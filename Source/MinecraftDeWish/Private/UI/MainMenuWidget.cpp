@@ -1,6 +1,9 @@
 #include "UI/MainMenuWidget.h"
 
-#include "Blueprint/WidgetTree.h"
+#include "Engine/World.h"
+#include "GameFramework/Actor.h"
+#include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
@@ -35,6 +38,11 @@ UMainMenuWidget::UMainMenuWidget(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 	SetIsFocusable(true);
+
+	// Sensible defaults: one pitch per menu entry (Continue, Nouveau monde, Réglages, Quitter).
+	// Tunable in the widget class defaults.
+	AngelEntryPitches = { 0.f, 6.f, 12.f, 18.f };
+	AngelInterpSpeed = 8.f;
 }
 
 TSharedRef<SWidget> UMainMenuWidget::RebuildWidget()
@@ -307,6 +315,80 @@ void UMainMenuWidget::HandleContinueClicked()
 	Descriptor.DreadPreset = TEXT("Standard");
 
 	OnNewWorldRequested.Broadcast(Descriptor);
+}
+
+int32 UMainMenuWidget::GetActiveEntryIndex() const
+{
+	for (int32 i = 0; i < EntryButtons.Num(); ++i)
+	{
+		if (UButton* Entry = EntryButtons[i])
+		{
+			if (Entry->IsHovered() || Entry->HasKeyboardFocus())
+			{
+				return i;
+			}
+		}
+	}
+
+	// Fall back to the first visible entry so the pointer has a sane default.
+	for (int32 i = 0; i < EntryButtons.Num(); ++i)
+	{
+		if (UButton* Entry = EntryButtons[i])
+		{
+			if (Entry->GetVisibility() == ESlateVisibility::Visible)
+			{
+				return i;
+			}
+		}
+	}
+	return 0;
+}
+
+void UMainMenuWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// Resolve the pointing actor once.
+	if (!bAngelArmResolved)
+	{
+		bAngelArmResolved = true;
+		UClass* ArmClass = LoadClass<AActor>(nullptr, TEXT("/Game/Blueprints/SM_WeepingAngel_Point_RightArm.SM_WeepingAngel_Point_RightArm_C"));
+		if (ArmClass)
+		{
+			TArray<AActor*> Found;
+			UGameplayStatics::GetAllActorsOfClass(World, ArmClass, Found);
+			if (Found.Num() > 0)
+			{
+				CachedAngelArm = Found[0];
+				CurrentAngelPitch = CachedAngelArm->GetActorRotation().Roll;
+			}
+		}
+	}
+
+	if (!CachedAngelArm.Get())
+	{
+		return;
+	}
+
+	const int32 Index = GetActiveEntryIndex();
+	float TargetPitch = CurrentAngelPitch;
+	if (Index >= 0 && Index < AngelEntryPitches.Num())
+	{
+		TargetPitch = AngelEntryPitches[Index];
+	}
+
+	CurrentAngelPitch = UKismetMathLibrary::FInterpTo(CurrentAngelPitch, TargetPitch, InDeltaTime, AngelInterpSpeed);
+
+	FRotator NewRot = CachedAngelArm->GetActorRotation();
+	NewRot.Pitch = 0.f;
+	NewRot.Roll = CurrentAngelPitch;
+	CachedAngelArm->SetActorRotation(NewRot);
 }
 
 bool UMainMenuWidget::HasSavedWorlds() const

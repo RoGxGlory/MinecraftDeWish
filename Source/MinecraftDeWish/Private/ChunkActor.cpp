@@ -1,4 +1,5 @@
 #include "ChunkActor.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "WorldGenerator.h"
 #include "MiningQueueSystem.h"
 #include "BaublesSystem.h"
@@ -12,7 +13,7 @@ AChunkActor::AChunkActor()
 	// Main mesh for solid blocks — full physics collision
 	ProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMesh"));
 	RootComponent = ProceduralMesh;
-	ProceduralMesh->bUseAsyncCooking = false;
+	ProceduralMesh->bUseAsyncCooking = true;
 	ProceduralMesh->bUseComplexAsSimpleCollision = true;
 	ProceduralMesh->SetCastShadow(true);
 	ProceduralMesh->bAffectDistanceFieldLighting = false;
@@ -23,7 +24,7 @@ AChunkActor::AChunkActor()
 	// Separate mesh for non-solid blocks (torches, seeds) — trace-only collision
 	NonSolidMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("NonSolidMesh"));
 	NonSolidMesh->SetupAttachment(RootComponent);
-	NonSolidMesh->bUseAsyncCooking = false;
+	NonSolidMesh->bUseAsyncCooking = true;
 	NonSolidMesh->bUseComplexAsSimpleCollision = true;
 	NonSolidMesh->SetCastShadow(true);
 	NonSolidMesh->bAffectDistanceFieldLighting = false;
@@ -60,6 +61,12 @@ void AChunkActor::InitializeChunk(const FChunkCoord& InCoord, int32 InHeight, fl
 	WorldGenerator = InWorldGen;
 
 	BlockData.SetNumZeroed(CHUNK_SIZE_X * CHUNK_SIZE_Y * ChunkHeight);
+	PendingBlockData.Reset();
+	bHasPendingData = false;
+	HeightMap.SetNumZeroed(CHUNK_SIZE_X * CHUNK_SIZE_Y);
+	// The cave mask is allocated lazily by SetCaveTag(); a recycled chunk must not keep the tags
+	// of the previous generation.
+	CaveTag.Reset();
 
 	SetActorLocation(FVector(
 		static_cast<float>(ChunkCoord.X * CHUNK_SIZE_X) * BlockScale,
@@ -74,7 +81,53 @@ uint8 AChunkActor::GetBlock(int32 X, int32 Y, int32 Z) const
 	{
 		return 0;
 	}
-	return BlockData[GetBlockIndex(X, Y, Z)];
+	// During async generation, data lives in PendingBlockData; read from it if available.
+	const TArray<uint8>& SourceData = (bHasPendingData && PendingBlockData.Num() > 0) ? PendingBlockData : BlockData;
+	const int32 Index = GetBlockIndex(X, Y, Z);
+	if (SourceData.IsValidIndex(Index))
+	{
+		return SourceData[Index];
+	}
+	return 0;
+}
+
+uint8 AChunkActor::GetBlockMeta(int32 X, int32 Y, int32 Z) const
+{
+	if (!IsValidCoord(X, Y, Z))
+	{
+		return 0;
+	}
+
+	// `SetBlockWithMeta(..., 0)` removes the entry, so "absent" and "floor mount" are the same
+	// value. Never invent a meta here: the renderer decodes 0 as a floor torch.
+	return BlockMetadata.FindRef(GetBlockIndex(X, Y, Z));
+}
+
+void AChunkActor::SetCaveTag(int32 X, int32 Y, int32 Z, uint8 Archetype)
+{
+	if (!IsValidCoord(X, Y, Z))
+	{
+		return;
+	}
+
+	const int32 Total = CHUNK_SIZE_X * CHUNK_SIZE_Y * ChunkHeight;
+	if (CaveTag.Num() != Total)
+	{
+		CaveTag.SetNumZeroed(Total);
+	}
+
+	CaveTag[GetBlockIndex(X, Y, Z)] = Archetype;
+}
+
+uint8 AChunkActor::GetCaveTag(int32 X, int32 Y, int32 Z) const
+{
+	if (!IsValidCoord(X, Y, Z) || CaveTag.Num() == 0)
+	{
+		return 0;
+	}
+
+	const int32 Index = GetBlockIndex(X, Y, Z);
+	return CaveTag.IsValidIndex(Index) ? CaveTag[Index] : 0;
 }
 
 void AChunkActor::SetBlock(int32 X, int32 Y, int32 Z, uint8 BlockID)
@@ -90,7 +143,14 @@ void AChunkActor::SetBlockGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID)
 {
 	if (IsValidCoord(X, Y, Z))
 	{
-		BlockData[GetBlockIndex(X, Y, Z)] = BlockID;
+		// Ensure the pending buffer is sized correctly.
+		const int32 TotalSize = CHUNK_SIZE_X * CHUNK_SIZE_Y * ChunkHeight;
+		if (PendingBlockData.Num() != TotalSize)
+		{
+			PendingBlockData.SetNumZeroed(TotalSize);
+		}
+		PendingBlockData[GetBlockIndex(X, Y, Z)] = BlockID;
+		bHasPendingData = true;
 	}
 }
 
@@ -182,8 +242,14 @@ void AChunkActor::SetBlockWithMetaGenerated(int32 X, int32 Y, int32 Z, uint8 Blo
 {
 	if (IsValidCoord(X, Y, Z))
 	{
+		const int32 TotalSize = CHUNK_SIZE_X * CHUNK_SIZE_Y * ChunkHeight;
+		if (PendingBlockData.Num() != TotalSize)
+		{
+			PendingBlockData.SetNumZeroed(TotalSize);
+		}
 		const int32 Index = GetBlockIndex(X, Y, Z);
-		BlockData[Index] = BlockID;
+		PendingBlockData[Index] = BlockID;
+		bHasPendingData = true;
 
 		if (MetaRotation > 0)
 		{
@@ -400,7 +466,7 @@ void AChunkActor::AddFace(
 	MeshData.UV1.Add(FVector2D(TexSlice, SecondaryTexSlice));
 	MeshData.UV1.Add(FVector2D(TexSlice, SecondaryTexSlice));
 
-	// R = slice index, G = foliage wind flag, B = biome blend weight, A = 1
+	// R = slice index, G = foliage wind flag, B = biome blend weight, A = ambient occlusion
 	// Top faces receive per-corner weights so the cross-fade interpolates across the quad
 	// instead of banding at block boundaries.
 	// The mesh sections are created with bSRGBConversion=true so the material's VertexColor
@@ -414,9 +480,96 @@ void AChunkActor::AddFace(
 		static_cast<float>(CornerBlendWeights.W)
 	};
 
+	// Baked ambient occlusion: for each vertex, check the 3 blocks adjacent to that vertex
+	// (in the plane perpendicular to the face normal). More solid neighbours = darker.
+	// Standard voxel AO: count solid neighbours among the 3 adjacent blocks.
+	auto IsSolidAt = [&](int32 VX, int32 VY, int32 VZ) -> bool
+	{
+		if (VX < 0 || VX >= CHUNK_SIZE_X || VY < 0 || VY >= CHUNK_SIZE_Y || VZ < 0 || VZ >= ChunkHeight)
+		{
+			// Out of chunk: query world generator if available
+			if (WorldGenerator.IsValid())
+			{
+				uint8 BlockID = 0;
+				int32 WorldX = ChunkCoord.X * CHUNK_SIZE_X + VX;
+				int32 WorldY = ChunkCoord.Y * CHUNK_SIZE_Y + VY;
+				if (WorldGenerator->GetVoxelAt(WorldX, WorldY, VZ, BlockID))
+				{
+					return BlockID != 0;
+				}
+			}
+			// Unknown neighbour: treat as air (no AO darkening)
+			return false;
+		}
+		return BlockData[GetBlockIndex(VX, VY, VZ)] != 0;
+	};
+
+	// Determine the 3 neighbour offsets for each of the 4 vertices based on face normal.
+	// For each vertex, we check: side1, side2, and diagonal (side1+side2).
+	int32 NX = 0, NY = 0, NZ = 0;
+	switch (Face)
+	{
+	case EBlockFace::Top:    NZ = 1; break;  // +Z, neighbours above
+	case EBlockFace::Bottom: NZ = -1; break; // -Z, neighbours below
+	case EBlockFace::North:  NX = 1; break;  // +X
+	case EBlockFace::South:  NX = -1; break; // -X
+	case EBlockFace::East:   NY = 1; break;  // +Y
+	case EBlockFace::West:   NY = -1; break; // -Y
+	}
+
+	// Base block position in voxel coords
+	const int32 BaseX = FMath::RoundToInt(BlockPos.X / BlockScale);
+	const int32 BaseY = FMath::RoundToInt(BlockPos.Y / BlockScale);
+	const int32 BaseZ = FMath::RoundToInt(BlockPos.Z / BlockScale);
+
+	// For each vertex, the two perpendicular directions
+	FVector2D Perp1, Perp2;
+	switch (Face)
+	{
+	case EBlockFace::Top:
+	case EBlockFace::Bottom:
+		Perp1 = FVector2D(1.0f, 0.0f); // X
+		Perp2 = FVector2D(0.0f, 1.0f); // Y
+		break;
+	case EBlockFace::North:
+	case EBlockFace::South:
+		Perp1 = FVector2D(0.0f, 1.0f); // Y
+		Perp2 = FVector2D(0.0f, 0.0f); // Z (handled below)
+		break;
+	case EBlockFace::East:
+	case EBlockFace::West:
+		Perp1 = FVector2D(1.0f, 0.0f); // X
+		Perp2 = FVector2D(0.0f, 0.0f); // Z (handled below)
+		break;
+	}
+
+	// Simplified AO: for each vertex, check the block in the face normal direction
+	// at the vertex corner. If solid, darken.
+	float AOValues[4];
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
-		MeshData.VertexColors.Add(FLinearColor(TexSlice, WindWeight, FMath::Clamp(VertexWeights[Index], 0.0f, 1.0f), 1.0f));
+		// Vertex corner offsets (0 or 1 in each perpendicular axis)
+		int32 CX = (Index == 1 || Index == 2) ? 1 : 0;
+		int32 CY = (Index == 2 || Index == 3) ? 1 : 0;
+
+		// The 3 adjacent blocks for this vertex
+		int32 SX1 = BaseX + (CX == 0 ? -1 : 0) * (Face == EBlockFace::North || Face == EBlockFace::South ? 0 : 1);
+		int32 SY1 = BaseY + (CY == 0 ? -1 : 0) * (Face == EBlockFace::East || Face == EBlockFace::West ? 0 : 1);
+		int32 SZ1 = BaseZ;
+
+		// Simplified: just check the block directly above/below the vertex
+		bool bSolid1 = IsSolidAt(BaseX + CX, BaseY + CY, BaseZ + NZ);
+		bool bSolid2 = IsSolidAt(BaseX + (CX == 0 ? -1 : CX), BaseY + CY, BaseZ);
+		bool bSolid3 = IsSolidAt(BaseX + CX, BaseY + (CY == 0 ? -1 : CY), BaseZ);
+
+		int32 SolidCount = (bSolid1 ? 1 : 0) + (bSolid2 ? 1 : 0) + (bSolid3 ? 1 : 0);
+		// 0 solid = 1.0 (bright), 3 solid = 0.25 (dark)
+		AOValues[Index] = 1.0f - (static_cast<float>(SolidCount) / 3.0f) * 0.75f;
+	}
+
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		MeshData.VertexColors.Add(FLinearColor(TexSlice, WindWeight, FMath::Clamp(VertexWeights[Index], 0.0f, 1.0f), AOValues[Index]));
 	}
 }
 
@@ -766,6 +919,18 @@ void AChunkActor::AddTorchMesh(
 
 void AChunkActor::UpdateTorchLights()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(AChunkActor_UpdateTorchLights);
+
+	// Release any lights previously acquired for this chunk back to the global pool.
+	if (WorldGenerator.IsValid())
+	{
+		for (UPointLightComponent* Light : TorchLights)
+		{
+			WorldGenerator->ReleaseTorchLight(Light);
+		}
+	}
+	TorchLights.Empty();
+
 	TArray<FVector> RequiredTorchLocations;
 
 	for (int32 Z = 0; Z < ChunkHeight; ++Z)
@@ -776,119 +941,174 @@ void AChunkActor::UpdateTorchLights()
 			{
 				if (BlockData[GetBlockIndex(X, Y, Z)] == static_cast<uint8>(EBlockType::Torch))
 				{
-					const FVector RelPos(
+					const FVector WorldPos = GetActorLocation() + FVector(
 						(static_cast<float>(X) + 0.5f) * BlockScale,
 						(static_cast<float>(Y) + 0.5f) * BlockScale,
 						(static_cast<float>(Z) + 0.65f) * BlockScale
 					);
-					RequiredTorchLocations.Add(RelPos);
+					RequiredTorchLocations.Add(WorldPos);
 				}
 			}
 		}
 	}
 
-	while (TorchLights.Num() < RequiredTorchLocations.Num())
+	// Acquire from the global pool (max 16, shadowless). Stop once the pool is empty.
+	if (WorldGenerator.IsValid())
 	{
-		UPointLightComponent* NewLight = NewObject<UPointLightComponent>(this);
-		NewLight->SetMobility(EComponentMobility::Movable);
-		NewLight->SetupAttachment(RootComponent);
-		NewLight->SetIntensity(2500.0f);
-		NewLight->SetAttenuationRadius(900.0f);
-		NewLight->SetLightColor(FLinearColor(1.0f, 0.78f, 0.50f));
-		NewLight->SetCastShadows(false);
-		NewLight->RegisterComponentWithWorld(GetWorld());
-		TorchLights.Add(NewLight);
-	}
-
-	while (TorchLights.Num() > RequiredTorchLocations.Num())
-	{
-		UPointLightComponent* ExcessLight = TorchLights.Pop();
-		if (ExcessLight)
+		for (const FVector& Loc : RequiredTorchLocations)
 		{
-			ExcessLight->DestroyComponent();
-		}
-	}
-
-	for (int32 i = 0; i < RequiredTorchLocations.Num(); ++i)
-	{
-		if (TorchLights[i])
-		{
-			TorchLights[i]->SetRelativeLocation(RequiredTorchLocations[i]);
-			TorchLights[i]->SetVisibility(true);
+			UPointLightComponent* Light = WorldGenerator->AcquireTorchLight();
+			if (!Light)
+			{
+				break;
+			}
+			Light->SetWorldLocation(Loc);
+			TorchLights.Add(Light);
 		}
 	}
 }
 
 void AChunkActor::ClearTorchLights()
 {
-	for (UPointLightComponent* Light : TorchLights)
+	if (WorldGenerator.IsValid())
 	{
-		if (Light)
+		for (UPointLightComponent* Light : TorchLights)
 		{
-			Light->DestroyComponent();
+			WorldGenerator->ReleaseTorchLight(Light);
 		}
 	}
 	TorchLights.Empty();
 }
 
+
+
 void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FChunkMeshData& InNonSolidMeshData)
 {
-	// Clear mesh sections on both components
-	ProceduralMesh->ClearMeshSection(0);
-	NonSolidMesh->ClearMeshSection(0);
+	TRACE_CPUPROFILER_EVENT_SCOPE(AChunkActor_ApplyMeshData);
 
 	// Section 0 on ProceduralMesh: Solid blocks — full physics collision (QueryAndPhysics)
-	if (!InSolidMeshData.IsEmpty())
+	if (InSolidMeshData.IsEmpty())
 	{
-		ProceduralMesh->CreateMeshSection_LinearColor(
-			0,
-			InSolidMeshData.Vertices,
-			InSolidMeshData.Triangles,
-			InSolidMeshData.Normals,
-			InSolidMeshData.UV0,
-			InSolidMeshData.UV1,
-			TArray<FVector2D>(),
-			TArray<FVector2D>(),
-			InSolidMeshData.VertexColors,
-			InSolidMeshData.Tangents,
-			true, // Generate collision for solid blocks
-			true  // sRGB conversion: the material decodes vertex color, keep weights linear
-		);
+		if (ProceduralMesh)
+		{
+			ProceduralMesh->ClearMeshSection(0);
+		}
+	}
+	else
+	{
+		// Prefer UpdateMeshSection over CreateMeshSection when the section already exists
+		// and the triangle topology is unchanged: this avoids recreating the collision cook.
+		FProcMeshSection* ExistingSolid = ProceduralMesh ? ProceduralMesh->GetProcMeshSection(0) : nullptr;
+		const bool bCanUpdateSolid = ExistingSolid != nullptr
+			&& ExistingSolid->ProcIndexBuffer.Num() == InSolidMeshData.Triangles.Num();
+
+		if (bCanUpdateSolid)
+		{
+			ProceduralMesh->UpdateMeshSection_LinearColor(
+				0,
+				InSolidMeshData.Vertices,
+				InSolidMeshData.Normals,
+				InSolidMeshData.UV0,
+				InSolidMeshData.UV1,
+				TArray<FVector2D>(),
+				TArray<FVector2D>(),
+				InSolidMeshData.VertexColors,
+				InSolidMeshData.Tangents
+			);
+		}
+		else
+		{
+			if (ProceduralMesh)
+			{
+				ProceduralMesh->ClearMeshSection(0);
+			}
+			if (ProceduralMesh)
+			{
+				ProceduralMesh->CreateMeshSection_LinearColor(
+					0,
+					InSolidMeshData.Vertices,
+					InSolidMeshData.Triangles,
+					InSolidMeshData.Normals,
+					InSolidMeshData.UV0,
+					InSolidMeshData.UV1,
+					TArray<FVector2D>(),
+					TArray<FVector2D>(),
+					InSolidMeshData.VertexColors,
+					InSolidMeshData.Tangents,
+					true, // Generate collision for solid blocks
+					true  // sRGB conversion: the material decodes vertex color, keep weights linear
+				);
+			}
+		}
 
 		UMaterialInterface* SolidMat = (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
 			? WorldGenerator->TerrainMaterial
 			: DefaultTerrainMaterial;
 
-		if (SolidMat)
+		if (SolidMat && ProceduralMesh)
 		{
 			ProceduralMesh->SetMaterial(0, SolidMat);
 		}
 	}
 
 	// Section 0 on NonSolidMesh: Non-solid blocks (torches, seeds) — QueryOnly collision
-	// Line traces still hit these for WB_BlockInfo and destroy system, but players walk through them.
-	if (!InNonSolidMeshData.IsEmpty())
+	if (InNonSolidMeshData.IsEmpty())
 	{
-		NonSolidMesh->CreateMeshSection_LinearColor(
-			0,
-			InNonSolidMeshData.Vertices,
-			InNonSolidMeshData.Triangles,
-			InNonSolidMeshData.Normals,
-			InNonSolidMeshData.UV0,
-			InNonSolidMeshData.UV1,
-			TArray<FVector2D>(),
-			TArray<FVector2D>(),
-			InNonSolidMeshData.VertexColors,
-			InNonSolidMeshData.Tangents,
-			true, // Generate collision for trace queries
-			true  // sRGB conversion: the material decodes vertex color, keep weights linear
-		);
+		if (NonSolidMesh)
+		{
+			NonSolidMesh->ClearMeshSection(0);
+		}
+	}
+	else
+	{
+		FProcMeshSection* ExistingNonSolid = NonSolidMesh ? NonSolidMesh->GetProcMeshSection(0) : nullptr;
+		const bool bCanUpdateNonSolid = ExistingNonSolid != nullptr
+			&& ExistingNonSolid->ProcIndexBuffer.Num() == InNonSolidMeshData.Triangles.Num();
+
+		if (bCanUpdateNonSolid)
+		{
+			NonSolidMesh->UpdateMeshSection_LinearColor(
+				0,
+				InNonSolidMeshData.Vertices,
+				InNonSolidMeshData.Normals,
+				InNonSolidMeshData.UV0,
+				InNonSolidMeshData.UV1,
+				TArray<FVector2D>(),
+				TArray<FVector2D>(),
+				InNonSolidMeshData.VertexColors,
+				InNonSolidMeshData.Tangents
+			);
+		}
+		else
+		{
+			if (NonSolidMesh)
+			{
+				NonSolidMesh->ClearMeshSection(0);
+			}
+			if (NonSolidMesh)
+			{
+				NonSolidMesh->CreateMeshSection_LinearColor(
+					0,
+					InNonSolidMeshData.Vertices,
+					InNonSolidMeshData.Triangles,
+					InNonSolidMeshData.Normals,
+					InNonSolidMeshData.UV0,
+					InNonSolidMeshData.UV1,
+					TArray<FVector2D>(),
+					TArray<FVector2D>(),
+					InNonSolidMeshData.VertexColors,
+					InNonSolidMeshData.Tangents,
+					true, // Generate collision for trace queries
+					true  // sRGB conversion: the material decodes vertex color, keep weights linear
+				);
+			}
+		}
 
 		UMaterialInterface* NonSolidMat = (WorldGenerator.IsValid() && WorldGenerator->TerrainMaterial)
 			? WorldGenerator->TerrainMaterial
 			: DefaultTerrainMaterial;
 
-		if (NonSolidMat)
+		if (NonSolidMat && NonSolidMesh)
 		{
 			NonSolidMesh->SetMaterial(0, NonSolidMat);
 		}
@@ -897,8 +1117,67 @@ void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FCh
 	UpdateTorchLights();
 }
 
+void AChunkActor::ApplyPendingData()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(AChunkActor_ApplyPendingData);
+
+	if (!bHasPendingData || PendingBlockData.Num() == 0)
+	{
+		return;
+	}
+
+	const int32 TotalSize = CHUNK_SIZE_X * CHUNK_SIZE_Y * ChunkHeight;
+	if (BlockData.Num() != TotalSize)
+	{
+		BlockData.SetNumZeroed(TotalSize);
+	}
+
+	FMemory::Memcpy(BlockData.GetData(), PendingBlockData.GetData(), TotalSize * sizeof(uint8));
+	PendingBlockData.Reset();
+	bHasPendingData = false;
+
+	// Rebuild height map.
+	for (int32 Y = 0; Y < CHUNK_SIZE_Y; ++Y)
+	{
+		for (int32 X = 0; X < CHUNK_SIZE_X; ++X)
+		{
+			uint8 TopZ = 0;
+			for (int32 Z = ChunkHeight - 1; Z >= 0; --Z)
+			{
+				if (BlockData[GetBlockIndex(X, Y, Z)] != 0)
+				{
+					TopZ = static_cast<uint8>(Z);
+					break;
+				}
+			}
+			HeightMap[Y * CHUNK_SIZE_X + X] = TopZ;
+		}
+	}
+}
+
+void AChunkActor::ApplyPendingMesh()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(AChunkActor_ApplyPendingMesh);
+
+	if (!bHasPendingMesh)
+	{
+		return;
+	}
+
+	ApplyMeshData(PendingSolidMeshData, PendingNonSolidMeshData);
+
+	PendingSolidMeshData.Reset();
+	PendingNonSolidMeshData.Reset();
+	bHasPendingMesh = false;
+}
+
 void AChunkActor::UpdateMesh()
 {
+	// Ensure pending generation data is applied before meshing.
+	if (bHasPendingData)
+	{
+		ApplyPendingData();
+	}
 	FChunkMeshData SolidMeshData;
 	FChunkMeshData NonSolidMeshData;
 	GenerateMeshData(SolidMeshData, NonSolidMeshData);

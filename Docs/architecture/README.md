@@ -13,6 +13,9 @@ Format: `adr-NNNN-short-slug.md`, four-digit, never renumbered. An ADR is immuta
 | [0001](adr-0001-lumen-mandatory.md) | Lumen is mandatory on every quality level | Accepted | 2026-11-09 |
 | [0002](adr-0002-generated-vs-player-voxel-writes.md) | Generated voxel writes are not player edits | Accepted | 2026-11-09 |
 | [0003](adr-0003-block-crack-overlay-driver.md) | Block crack overlay is driven by the Blueprint mining timer | Accepted | 2026-11-10 |
+| [0016](adr-0016-weather-system.md) | Weather & Day/Night system architecture | Accepted | 2026-11-11 |
+| [0017](adr-0017-weather-assets.md) | Weather Niagara and Post-Process Material Assets | Accepted | 2026-11-11 |
+| [0018](adr-0018-viewmodel-system.md) | First-Person Viewmodel and Tool Equipment System | Accepted | 2026-11-11 |
 
 ## Strategy documents
 

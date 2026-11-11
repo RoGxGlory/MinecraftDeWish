@@ -1,5 +1,8 @@
 #include "UI/GameplayPlayerController.h"
 
+#include "WorldGenerator.h"
+#include "VoxelPlacementRules.h"
+#include "QuickSlotsInventorySystem.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
@@ -119,6 +122,11 @@ void AGameplayPlayerController::SetupInputComponent()
 		if (UInputAction* InventoryAction = LoadObject<UInputAction>(nullptr, TEXT("/Game/Input/Actions/IA_Inventory.IA_Inventory")))
 		{
 			EIC->BindAction(InventoryAction, ETriggerEvent::Started, this, &AGameplayPlayerController::HandleInventoryPressed);
+		}
+
+		if (UInputAction* PlaceAction = LoadObject<UInputAction>(nullptr, TEXT("/Game/Input/Actions/IA_PlaceBlock.IA_PlaceBlock")))
+		{
+			EIC->BindAction(PlaceAction, ETriggerEvent::Started, this, &AGameplayPlayerController::HandlePlacePressed);
 		}
 	}
 }
@@ -253,4 +261,62 @@ void AGameplayPlayerController::HideInventory()
 
 	FInputModeGameOnly InputMode;
 	SetInputMode(InputMode);
+}
+
+void AGameplayPlayerController::HandlePlacePressed()
+{
+	// Place a block from the currently selected quick slot at the targeted location.
+	if (bInventoryOpen || bIsPaused)
+	{
+		return;
+	}
+
+	AWorldGenerator* WorldGen = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AWorldGenerator> It(World); It; ++It)
+		{
+			WorldGen = *It;
+			break;
+		}
+	}
+
+	if (!WorldGen)
+	{
+		return;
+	}
+
+	// Trace for the placement location.
+	FVector BreakPos, PlacePos;
+	uint8 HitBlockID = 0;
+	APlayerCameraManager* Cam = PlayerCameraManager;
+	if (!WorldGen->TraceForBlock(Cam, 500.0f, BreakPos, PlacePos, HitBlockID))
+	{
+		return;
+	}
+
+	// Determine the block to place from the selected quick slot.
+	uint8 BlockToPlace = 0;
+	if (InventoryWidget)
+	{
+		int32 SelectedSlot = UQuickSlotsInventorySystem::GetSelectedQuickSlotIndex(InventoryWidget);
+		FQuickSlotData SlotData = UQuickSlotsInventorySystem::GetQuickSlotData(SelectedSlot);
+		BlockToPlace = SlotData.BlockID;
+	}
+
+	if (BlockToPlace == 0)
+	{
+		// No block in selected slot.
+		return;
+	}
+
+	// Place the block.
+	FIntVector Voxel;
+	WorldGen->WorldLocationToVoxelCoord(PlacePos, Voxel.X, Voxel.Y, Voxel.Z);
+	EPlaceBlockResult Result = WorldGen->TryPlaceBlock(Voxel, BlockToPlace, 0, true, true, Cam->GetCameraLocation(), PlacePos);
+
+	if (Result != EPlaceBlockResult::Success)
+	{
+		UE_LOG(LogTemp, Log, TEXT("PlaceBlock failed: %s"), FPlacementRules::ToString(Result));
+	}
 }

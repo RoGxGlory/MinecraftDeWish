@@ -1,0 +1,20 @@
+{
+  "props": [
+    "blend_mode_in",
+    "blend_mode_out",
+    "blend_profile_in",
+    "blend_profile_out",
+    "controller",
+    "data_model",
+    "data_model_interface",
+    "sequence_length",
+    "slot_anim_tracks"
+  ],
+  "prop_composite_sections_err": "AnimMontage: Failed to find property 'composite_sections' for attribute 'composite_sections' on 'AnimMontage'",
+  "prop_anim_segments_err": "AnimMontage: Failed to find property 'anim_segments' for attribute 'anim_segments' on 'AnimMontage'",
+  "prop_slot_anim_tracks": "<class 'Array'> = [{slot_name: \"DefaultSlot\", anim_track: {anim_segments: }}]",
+  "prop_blend_in": "<class 'AlphaBlend'> = <Struct 'AlphaBlend' (0x00000294C8855280) {}>",
+  "prop_blend_out": "<class 'AlphaBlend'> = <Struct 'AlphaBlend' (0x00000294C88552B8) {}>",
+  "prop_sequence_length": "<class 'float'> = 0.0",
+  "prop_rate_scale": "<class 'float'> = 1.0"
+}

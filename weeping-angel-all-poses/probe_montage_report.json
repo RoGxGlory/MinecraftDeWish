@@ -1,0 +1,15 @@
+{
+  "type": "<class 'AnimMontage'>",
+  "methods": [
+    "create_slot_animation_as_dynamic_montage_with_blend_settings",
+    "get_num_sections",
+    "get_section_index",
+    "get_section_name",
+    "is_valid_additive_slot",
+    "is_valid_section_name",
+    "slot_anim_tracks"
+  ],
+  "notifies_prop_err": "AnimMontage: Property 'Notifies' for attribute 'notifies' on 'AnimMontage' is protected and cannot be read",
+  "composite_sections_err": "AnimMontage: Failed to find property 'composite_sections' for attribute 'composite_sections' on 'AnimMontage'",
+  "slot_anim_tracks": "<class 'Array'> len=1"
+}

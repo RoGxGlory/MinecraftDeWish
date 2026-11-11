@@ -1,0 +1,23 @@
+{
+  "AnimSegment": true,
+  "FAnimSegment": false,
+  "AnimTrack": true,
+  "SlotAnimationTrack": true,
+  "seg_classes": [
+    "AnimSegment",
+    "EditorAnimCompositeSegment",
+    "EditorAnimSegment",
+    "LandscapeSplineSegment",
+    "LandscapeSplineSegmentConnection",
+    "MoviePipelineSegmentWorkMetrics",
+    "NavigationSegmentLink",
+    "PCGGetSegmentSettings",
+    "PCGSplineToSegmentSettings",
+    "PCGSubdivideSegmentSettings",
+    "PropertyBindingPathSegment",
+    "RigUnit_ChainInfo_SegmentInfo",
+    "RigVMFunction_VisualLogSegment",
+    "SegmentedControlStyle",
+    "WidgetSegmentValueOverride"
+  ]
+}

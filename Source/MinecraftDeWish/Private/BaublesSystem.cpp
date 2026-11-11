@@ -48,12 +48,53 @@ bool UBaublesSystem::EquipTool(const FToolInstance& Tool)
 	FToolInstance& Slot = GetSlotRef(Tool.ToolType);
 	Slot = Tool;
 
+	// Cache MaxDurability from data definition when available (ADR-0007).
+	if (ToolDefinition)
+	{
+		Slot.MaxDurability = ToolDefinition->GetDurabilityMax(Tool.ToolType, Tool.ToolTier);
+		if (Slot.CurrentDurability <= 0 || Slot.CurrentDurability > Slot.MaxDurability)
+		{
+			Slot.CurrentDurability = Slot.MaxDurability;
+		}
+		if (Slot.ToolId == NAME_None)
+		{
+			Slot.ToolId = UToolDefinition::MakeToolId(Tool.ToolType, Tool.ToolTier);
+		}
+		if (!Slot.InstanceId.IsValid())
+		{
+			Slot.InstanceId = FGuid::NewGuid();
+		}
+	}
+
 	OnToolEquipped.Broadcast(Tool.ToolType, Slot);
 
 	UE_LOG(LogTemp, Log, TEXT("BaublesSystem: Equipped %s (Durability: %d/%d)"),
-		*Tool.GetDisplayName(), Tool.CurrentDurability, Tool.MaxDurability);
+		*Tool.GetDisplayName(), Slot.CurrentDurability, Slot.MaxDurability);
 
 	return true;
+}
+
+bool UBaublesSystem::EquipToolFromToolId(FName ToolId)
+{
+	if (!ToolDefinition)
+	{
+		return false;
+	}
+	const FToolRow* Row = ToolDefinition->FindToolRow(ToolId);
+	if (!Row)
+	{
+		return false;
+	}
+	FToolInstance Tool(Row->ToolType, Row->ToolTier);
+	Tool.ToolId = ToolId;
+	Tool.MaxDurability = Row->DurabilityMax;
+	Tool.CurrentDurability = Row->DurabilityMax;
+	return EquipTool(Tool);
+}
+
+bool UBaublesSystem::EquipToolFromTypeTier(EToolType ToolType, EToolTier ToolTier)
+{
+	return EquipToolFromToolId(UToolDefinition::MakeToolId(ToolType, ToolTier));
 }
 
 FToolInstance UBaublesSystem::UnequipTool(EToolType SlotType)
@@ -172,6 +213,83 @@ float UBaublesSystem::GetAttackDamage() const
 		return SwordSlot.GetAttackDamage();
 	}
 	return 1.0f; // Fist damage
+}
+
+// ==================== AUTO-TOOL SELECTION (ADR-0006) ====================
+
+void UBaublesSystem::RequestAutoToolSelection(EToolType CandidateToolType)
+{
+	if (CandidateToolType == ActiveToolType)
+	{
+		// Already active; cancel any pending.
+		CancelAutoToolSelection();
+		return;
+	}
+
+	if (bHasPendingAutoTool && PendingAutoToolType == CandidateToolType)
+	{
+		// Same candidate; timer already running.
+		return;
+	}
+
+	PendingAutoToolType = CandidateToolType;
+	bHasPendingAutoTool = true;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutoSelectTimerHandle);
+		World->GetTimerManager().SetTimer(AutoSelectTimerHandle, this, &UBaublesSystem::CommitPendingAutoTool, AutoSelectAntiBounceSeconds, false);
+	}
+	else
+	{
+		// No world (e.g. tests): commit immediately.
+		CommitPendingAutoTool();
+	}
+}
+
+void UBaublesSystem::CommitAutoToolSelection()
+{
+	if (bHasPendingAutoTool)
+	{
+		CommitPendingAutoTool();
+	}
+}
+
+void UBaublesSystem::CancelAutoToolSelection()
+{
+	bHasPendingAutoTool = false;
+	PendingAutoToolType = EToolType::None;
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutoSelectTimerHandle);
+	}
+}
+
+void UBaublesSystem::CommitPendingAutoTool()
+{
+	if (!bHasPendingAutoTool)
+	{
+		return;
+	}
+
+	const EToolType Committed = PendingAutoToolType;
+	bHasPendingAutoTool = false;
+	PendingAutoToolType = EToolType::None;
+
+	if (Committed != ActiveToolType)
+	{
+		ActiveToolType = Committed;
+		OnActiveToolChanged.Broadcast(ActiveToolType);
+	}
+}
+
+FToolInstance UBaublesSystem::GetActiveTool() const
+{
+	if (ActiveToolType == EToolType::None)
+	{
+		return FToolInstance();
+	}
+	return GetSlotConstRef(ActiveToolType);
 }
 
 // ==================== UI ====================

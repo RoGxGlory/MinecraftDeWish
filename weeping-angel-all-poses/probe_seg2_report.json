@@ -1,0 +1,31 @@
+{
+  "props": [
+    "anim_end_time",
+    "anim_play_rate",
+    "anim_reference",
+    "anim_start_time",
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "looping_count",
+    "set_editor_properties",
+    "set_editor_property",
+    "start_pos",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+  ],
+  "rna_err": "'AnimSegment' object has no attribute 'get_class'",
+  "prop_anim_reference": "None",
+  "prop_anim_err": "AnimSegment: Failed to find property 'anim' for attribute 'anim' on 'AnimSegment'",
+  "prop_start_pos": "0.0",
+  "prop_end_pos_err": "AnimSegment: Failed to find property 'end_pos' for attribute 'end_pos' on 'AnimSegment'",
+  "prop_anim_start_time": "0.0",
+  "prop_anim_end_time": "0.0",
+  "prop_anim_play_rate": "1.0",
+  "prop_looping_err": "AnimSegment: Failed to find property 'looping' for attribute 'looping' on 'AnimSegment'",
+  "prop_slot_index_err": "AnimSegment: Failed to find property 'slot_index' for attribute 'slot_index' on 'AnimSegment'"
+}

@@ -1,0 +1,32 @@
+{
+  "AnimBlueprint": true,
+  "AnimBlueprintFactory": true,
+  "AnimMontage": true,
+  "AnimMontageFactory": true,
+  "AnimSequence": true,
+  "AnimSequenceFactory": true,
+  "Skeleton": true,
+  "AnimInstance": true,
+  "AnimMontage_methods": [
+    "create_slot_animation_as_dynamic_montage_with_blend_settings",
+    "get_num_sections",
+    "get_section_index",
+    "get_section_name",
+    "get_skeleton",
+    "is_valid_additive_slot",
+    "is_valid_section_name",
+    "slot_anim_tracks"
+  ],
+  "AnimBlueprintFactory_props": [],
+  "AnimMontageFactory_props": [
+    "target_skeleton"
+  ],
+  "AnimSequenceFactory_props": [
+    "preview_skeletal_mesh",
+    "target_skeleton"
+  ],
+  "FbxFactory_props": [],
+  "FbxImportUI_props": [
+    "skeleton"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "type": "<class 'AnimMontage'>",
+  "slot_anim_tracks": "[{slot_name: \"DefaultSlot\", anim_track: {anim_segments: }}]",
+  "track_type": "<class 'SlotAnimationTrack'>",
+  "track_props": [
+    "anim_track",
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "slot_name",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+  ],
+  "track": "<Struct 'SlotAnimationTrack' (0x0000020ABF017960) {slot_name: \"DefaultSlot\", anim_track: {anim_segments: }}>",
+  "anim_track": "<Struct 'AnimTrack' (0x0000020ABF017970) {anim_segments: }>",
+  "slot_name": "DefaultSlot",
+  "num_sections": 1,
+  "sections": [
+    "Default"
+  ],
+  "skeleton": "<Object '/Game/Characters/Arms/SK_Arms_FP_Skeleton.SK_Arms_FP_Skeleton' (0x0000020ABB6EBA00) Class 'Skeleton'>"
+}

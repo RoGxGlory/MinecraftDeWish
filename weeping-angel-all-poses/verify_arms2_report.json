@@ -1,0 +1,21 @@
+{
+  "bone_count": 15,
+  "bone_names": [
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read",
+    "ERR: BoneNode: Property 'Name' for attribute 'name' on 'BoneNode' is protected and cannot be read"
+  ],
+  "hand_name": null
+}

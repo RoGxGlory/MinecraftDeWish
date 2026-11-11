@@ -7,7 +7,7 @@
 // Chunk dimensions
 constexpr int32 CHUNK_SIZE_X = 16;
 constexpr int32 CHUNK_SIZE_Y = 16;
-constexpr int32 DEFAULT_CHUNK_SIZE_Z = 64;
+constexpr int32 DEFAULT_CHUNK_SIZE_Z = 192; // Raised from 64 (Lot 2). Hard prerequisite: lots 0-2 complete.
 constexpr float DEFAULT_BLOCK_SCALE = 100.0f; // 100cm = 1m in Unreal Engine
 
 /** 2D Chunk Coordinate */

@@ -1,0 +1,7 @@
+{
+  "direct_assign": "SkeletalMeshSocket: Property 'SocketName' for attribute 'socket_name' on 'SkeletalMeshSocket' is read-only and cannot be set",
+  "uobject_name": "weapon_r",
+  "socket_name_prop": "None",
+  "num": 0,
+  "find": "None"
+}

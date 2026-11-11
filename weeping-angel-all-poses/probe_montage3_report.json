@@ -1,0 +1,27 @@
+{
+  "methods": [
+    "blend_mode_in",
+    "blend_mode_out",
+    "blend_profile_in",
+    "blend_profile_out",
+    "create_slot_animation_as_dynamic_montage_with_blend_settings",
+    "get_blend_in_args",
+    "get_blend_out_args",
+    "get_default_blend_in_time",
+    "get_default_blend_out_time",
+    "get_num_sections",
+    "get_section_index",
+    "get_section_name",
+    "is_valid_additive_slot",
+    "is_valid_section_name",
+    "slot_anim_tracks"
+  ],
+  "add_methods": [
+    "add_animation_modifier_of_class",
+    "add_asset_user_data_of_class",
+    "add_transform_attribute",
+    "create_attribute_identifier",
+    "create_slot_animation_as_dynamic_montage_with_blend_settings",
+    "is_valid_additive_slot"
+  ]
+}

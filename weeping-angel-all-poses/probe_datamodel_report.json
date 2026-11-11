@@ -1,0 +1,10 @@
+{
+  "dm_type": "<class 'NoneType'>",
+  "dm_props": [],
+  "dm_composite_sections_err": "'NoneType' object has no attribute 'composite_sections'",
+  "dm_sections_err": "'NoneType' object has no attribute 'sections'",
+  "dm_anim_segments_err": "'NoneType' object has no attribute 'anim_segments'",
+  "dm_get_sections_err": "'NoneType' object has no attribute 'get_sections'",
+  "dm_get_num_sections_err": "'NoneType' object has no attribute 'get_num_sections'",
+  "dm_methods": []
+}

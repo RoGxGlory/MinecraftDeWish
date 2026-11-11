@@ -1,0 +1,115 @@
+{
+  "montages": [
+    {
+      "name": "M_Swing_Pickaxe",
+      "path": "/Game/Characters/Arms/Montages/M_Swing_Pickaxe",
+      "exists": true,
+      "skeleton_match": true,
+      "num_sections": 1,
+      "sections": [
+        "Default"
+      ],
+      "segments": 1,
+      "segment_anim": "A_Tool_Swing_Pickaxe"
+    },
+    {
+      "name": "M_Swing_Shovel",
+      "path": "/Game/Characters/Arms/Montages/M_Swing_Shovel",
+      "exists": true,
+      "skeleton_match": true,
+      "num_sections": 1,
+      "sections": [
+        "Default"
+      ],
+      "segments": 1,
+      "segment_anim": "A_Tool_Swing_Shovel"
+    },
+    {
+      "name": "M_Swing_Axe",
+      "path": "/Game/Characters/Arms/Montages/M_Swing_Axe",
+      "exists": true,
+      "skeleton_match": true,
+      "num_sections": 1,
+      "sections": [
+        "Default"
+      ],
+      "segments": 1,
+      "segment_anim": "A_Tool_Swing_Axe"
+    },
+    {
+      "name": "M_Swing_Hoe",
+      "path": "/Game/Characters/Arms/Montages/M_Swing_Hoe",
+      "exists": true,
+      "skeleton_match": true,
+      "num_sections": 1,
+      "sections": [
+        "Default"
+      ],
+      "segments": 1,
+      "segment_anim": "A_Tool_Swing_Hoe"
+    },
+    {
+      "name": "M_Swing_Sword",
+      "path": "/Game/Characters/Arms/Montages/M_Swing_Sword",
+      "exists": true,
+      "skeleton_match": true,
+      "num_sections": 1,
+      "sections": [
+        "Default"
+      ],
+      "segments": 1,
+      "segment_anim": "A_Tool_Swing_Sword"
+    }
+  ],
+  "anims": [
+    {
+      "name": "A_Tool_Swing_Generic",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Generic",
+      "exists": true,
+      "skeleton_match": true,
+      "play_length": 1.2999999523162842,
+      "sequence_length": 1.2999999523162842
+    },
+    {
+      "name": "A_Tool_Swing_Pickaxe",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Pickaxe",
+      "exists": true,
+      "skeleton_match": true,
+      "play_length": 1.2999999523162842,
+      "sequence_length": 1.2999999523162842
+    },
+    {
+      "name": "A_Tool_Swing_Shovel",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Shovel",
+      "exists": true,
+      "skeleton_match": true,
+      "play_length": 1.2999999523162842,
+      "sequence_length": 1.2999999523162842
+    },
+    {
+      "name": "A_Tool_Swing_Axe",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Axe",
+      "exists": true,
+      "skeleton_match": true,
+      "play_length": 1.2999999523162842,
+      "sequence_length": 1.2999999523162842
+    },
+    {
+      "name": "A_Tool_Swing_Hoe",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Hoe",
+      "exists": true,
+      "skeleton_match": true,
+      "play_length": 1.2999999523162842,
+      "sequence_length": 1.2999999523162842
+    },
+    {
+      "name": "A_Tool_Swing_Sword",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Sword",
+      "exists": true,
+      "skeleton_match": true,
+      "play_length": 1.2999999523162842,
+      "sequence_length": 1.2999999523162842
+    }
+  ],
+  "errors": []
+}

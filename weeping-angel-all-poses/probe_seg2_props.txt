@@ -1,0 +1,17 @@
+anim_end_time
+anim_play_rate
+anim_reference
+anim_start_time
+assign
+cast
+copy
+export_text
+get_editor_property
+import_text
+looping_count
+set_editor_properties
+set_editor_property
+start_pos
+static_struct
+to_dict
+to_tuple

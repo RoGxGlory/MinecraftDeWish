@@ -1,0 +1,10 @@
+{
+  "name": "weapon_r",
+  "bone_name": "hand_r",
+  "socket_name": "None",
+  "relative_location": "<Struct 'Vector' (0x000002384C094488) {x: 0.000000, y: 0.000000, z: 0.000000}>",
+  "init_loc": "SkeletalMeshSocket: Failed to convert parameter 'skel_comp' when calling function 'SkeletalMeshSocket.InitializeSocketFromLocation' on 'weapon_r'\n  TypeError: NativizeProperty: Cannot nativize 'SkeletalMesh' as 'SkelComp' (ObjectProperty)\n    TypeError: NativizeObject: Cannot nativize 'SkeletalMesh' as 'Object' (allowed Class type: 'SkeletalMeshComponent')",
+  "num_after": 0,
+  "find": "None",
+  "skel_has_add_socket": false
+}

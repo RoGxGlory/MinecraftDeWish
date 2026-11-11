@@ -8,6 +8,7 @@
 class AWorldGenerator;
 class AMobCharacter;
 class UDayNightCycleSystem;
+class UDataTable;
 
 /**
  * UMobSpawnerSystem
@@ -62,6 +63,10 @@ public:
 	UPROPERTY()
 	TWeakObjectPtr<AWorldGenerator> WorldGenerator;
 
+	/** Cached day/night cycle (for weather multipliers) */
+	UPROPERTY()
+	TWeakObjectPtr<UDayNightCycleSystem> DayNightCycle;
+
 	// ==================== QUERIES ====================
 
 	/** Returns the count of currently alive hostile mobs */
@@ -72,9 +77,25 @@ public:
 	UFUNCTION(BlueprintPure, Category = "MobSpawner")
 	int32 CalculateLightLevel(const FIntVector& VoxelPos) const;
 
-	/** Force spawn a specific mob type at a location */
+	/** Exposed for testing. */
+	bool IsValidSpawnSurface(int32 VoxelX, int32 VoxelY, int32 VoxelZ) const;
+	bool HasNearbyTorch(int32 VoxelX, int32 VoxelY, int32 VoxelZ) const;
+
+	/** Class map: EMobType -> Blueprint mob class (BP_Mob_*). Populated by designer or DT_Mobs. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MobSpawner|Classes")
+	TMap<EMobType, TSubclassOf<AMobCharacter>> MobClasses;
+
+	/** Optional DataTable (DT_Mobs) resolving EMobType -> MobClass/mesh/ABP/stats/loot. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MobSpawner|Classes")
+	TObjectPtr<UDataTable> MobDataTable;
+
+	/** Force spawn a mob from its Blueprint class at a location */
 	UFUNCTION(BlueprintCallable, Category = "MobSpawner")
-	AMobCharacter* SpawnMob(EMobType MobType, const FVector& Location);
+	AMobCharacter* SpawnMob(TSubclassOf<AMobCharacter> MobClass, const FVector& Location);
+
+	/** Legacy: spawn by EMobType, resolves class from MobClasses (falls back to base). */
+	UFUNCTION(BlueprintCallable, Category = "MobSpawner", meta=(DeprecatedFunction, DeprecationMessage="Use SpawnMob(TSubclassOf<AMobCharacter>)"))
+	AMobCharacter* SpawnMobByType(EMobType MobType, const FVector& Location);
 
 protected:
 	virtual void BeginPlay() override;
@@ -99,10 +120,8 @@ private:
 	bool FindValidSpawnPosition(const FVector& PlayerLocation, FVector& OutSpawnPosition) const;
 
 	/** Check if a voxel position is a valid spawn surface */
-	bool IsValidSpawnSurface(int32 VoxelX, int32 VoxelY, int32 VoxelZ) const;
 
 	/** Check if area near a voxel has a torch */
-	bool HasNearbyTorch(int32 VoxelX, int32 VoxelY, int32 VoxelZ) const;
 
 	/** Pick a random mob type weighted by conditions */
 	EMobType PickRandomMobType() const;

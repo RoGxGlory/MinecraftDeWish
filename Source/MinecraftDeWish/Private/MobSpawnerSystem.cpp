@@ -16,6 +16,10 @@ void UMobSpawnerSystem::BeginPlay()
 	Super::BeginPlay();
 
 	WorldGenerator = Cast<AWorldGenerator>(GetOwner());
+	if (WorldGenerator.IsValid())
+	{
+		DayNightCycle = WorldGenerator->FindComponentByClass<UDayNightCycleSystem>();
+	}
 }
 
 void UMobSpawnerSystem::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -63,15 +67,29 @@ void UMobSpawnerSystem::ProcessSpawnCycle()
 
 	const FVector PlayerLoc = PC->GetPawn()->GetActorLocation();
 
-	// Attempt to spawn 1-4 mobs
-	const int32 SpawnAttempts = FMath::RandRange(1, 4);
+	// Attempt to spawn 1-4 mobs, scaled by weather spawn rate multiplier
+	float SpawnMultiplier = 1.0f;
+	if (DayNightCycle.IsValid())
+	{
+		SpawnMultiplier = DayNightCycle->GetMobSpawnRateMultiplier();
+	}
+	const int32 BaseAttempts = FMath::RandRange(1, 4);
+	const int32 SpawnAttempts = FMath::Max(0, FMath::RoundToInt(BaseAttempts * SpawnMultiplier));
 	for (int32 i = 0; i < SpawnAttempts && ActiveMobs.Num() < MaxMobCap; ++i)
 	{
 		FVector SpawnPos;
 		if (FindValidSpawnPosition(PlayerLoc, SpawnPos))
 		{
 			EMobType Type = PickRandomMobType();
-			AMobCharacter* Mob = SpawnMob(Type, SpawnPos);
+			AMobCharacter* Mob = nullptr;
+			if (MobClasses.Contains(Type) && MobClasses[Type])
+			{
+				Mob = SpawnMob(MobClasses[Type], SpawnPos);
+			}
+			else
+			{
+				Mob = SpawnMobByType(Type, SpawnPos);
+			}
 			if (Mob)
 			{
 				ActiveMobs.Add(Mob);
@@ -80,8 +98,39 @@ void UMobSpawnerSystem::ProcessSpawnCycle()
 	}
 }
 
-AMobCharacter* UMobSpawnerSystem::SpawnMob(EMobType MobType, const FVector& Location)
+AMobCharacter* UMobSpawnerSystem::SpawnMob(TSubclassOf<AMobCharacter> MobClass, const FVector& Location)
 {
+	if (!MobClass)
+	{
+		MobClass = AMobCharacter::StaticClass();
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+	AMobCharacter* Mob = GetWorld()->SpawnActor<AMobCharacter>(
+		MobClass,
+		Location,
+		FRotator(0.0f, FMath::FRandRange(0.0f, 360.0f), 0.0f),
+		SpawnParams
+	);
+
+	if (Mob && WorldGenerator.IsValid())
+	{
+		// Determine EMobType from the spawned class's default MobType if possible
+		EMobType Type = Mob->MobType;
+		Mob->InitializeMob(Type, WorldGenerator.Get());
+
+		UE_LOG(LogTemp, Log, TEXT("MobSpawner: Spawned %s at %s"),
+			*Mob->GetName(), *Location.ToString());
+	}
+
+	return Mob;
+}
+
+AMobCharacter* UMobSpawnerSystem::SpawnMobByType(EMobType MobType, const FVector& Location)
+{
+	// Legacy fallback: spawn base class and initialize by type (pre-Blueprint path).
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
@@ -96,7 +145,7 @@ AMobCharacter* UMobSpawnerSystem::SpawnMob(EMobType MobType, const FVector& Loca
 	{
 		Mob->InitializeMob(MobType, WorldGenerator.Get());
 
-		UE_LOG(LogTemp, Log, TEXT("MobSpawner: Spawned %s at %s"),
+		UE_LOG(LogTemp, Log, TEXT("MobSpawner: Spawned (legacy) %s at %s"),
 			*StaticEnum<EMobType>()->GetDisplayNameTextByValue(static_cast<int64>(MobType)).ToString(),
 			*Location.ToString());
 	}

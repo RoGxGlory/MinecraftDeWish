@@ -1,0 +1,10 @@
+{
+  "skm_bone_methods": [
+    "get_bone_children",
+    "get_bone_parent"
+  ],
+  "skel_bone_methods": [
+    "copy_bones_from_skeleton"
+  ],
+  "bone_info_err": "Skeleton: Failed to find property 'bone_info' for attribute 'bone_info' on 'Skeleton'"
+}

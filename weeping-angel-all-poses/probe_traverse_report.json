@@ -1,0 +1,11 @@
+{
+  "children_of_EMPTY": [],
+  "children_of_root": [
+    "spine_01"
+  ],
+  "children_of_spine_01": [
+    "clavicle_l",
+    "clavicle_r"
+  ],
+  "parent_of_hand_r": "lowerarm_r"
+}

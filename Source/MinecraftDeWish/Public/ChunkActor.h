@@ -80,6 +80,36 @@ public:
 	/** Flat block array (Size: 16 * 16 * ChunkHeight) */
 	TArray<uint8> BlockData;
 
+	/** Height map: highest solid block Z for each (X, Y) column (Size: 16 * 16). */
+	TArray<uint8> HeightMap;
+
+	/**
+	 * Diagnostic mask recording which `ECaveArchetype` carved each voxel (Size: 16 * 16 * ChunkHeight).
+	 *
+	 * Used by the spawner weighting (`cave-generation.md` §3.12) and by the probes. It is **never
+	 * persisted**: the archetype is a pure function of the world coordinates, so it can always be
+	 * recomputed. The array stays empty unless `AWorldGenerator::bEnableCaveTagging` is on, which
+	 * keeps the shipping memory cost at zero.
+	 */
+	TArray<uint8> CaveTag;
+
+	/**
+	 * Temporary buffer used during async generation to avoid data races.
+	 * The generation worker writes here; the game thread copies to BlockData at apply time.
+	 */
+	TArray<uint8> PendingBlockData;
+
+	/** True when PendingBlockData holds freshly generated data not yet copied to BlockData. */
+	bool bHasPendingData = false;
+
+	/**
+	 * Temporary mesh buffers used during async meshing.
+	 * The meshing worker writes here; the game thread applies to the PMC at apply time.
+	 */
+	FChunkMeshData PendingSolidMeshData;
+	FChunkMeshData PendingNonSolidMeshData;
+	bool bHasPendingMesh = false;
+
 	void InitializeChunk(const FChunkCoord& InCoord, int32 InHeight, float InScale, AWorldGenerator* InWorldGen);
 
 	FORCEINLINE int32 GetBlockIndex(int32 X, int32 Y, int32 Z) const
@@ -96,21 +126,51 @@ public:
 
 	uint8 GetBlock(int32 X, int32 Y, int32 Z) const;
 
+	/**
+	 * Attachment / rotation metadata of a voxel, or 0 when it has none.
+	 *
+	 * A torch stores its mount in `BlockMetadata` (`FPlacementRules::EncodeAttachMeta`): 0 is the
+	 * floor mount, 1..4 are the wall mounts. `SetBlockWithMeta(..., 0)` removes the entry, so a
+	 * missing entry and a floor mount are the same thing and read back as 0.
+	 */
+	uint8 GetBlockMeta(int32 X, int32 Y, int32 Z) const;
+
+	/**
+	 * Records the archetype that carved a voxel (diagnostic only, see `CaveTag`).
+	 *
+	 * Allocates the mask on first use so a generator with tagging disabled never pays for it.
+	 */
+	void SetCaveTag(int32 X, int32 Y, int32 Z, uint8 Archetype);
+
+	/** Archetype that carved a voxel, or 0 (`ECaveArchetype::None`) when untagged or empty. */
+	uint8 GetCaveTag(int32 X, int32 Y, int32 Z) const;
+
 	/** Player edit. Writes the voxel and flags the chunk as modified so it is persisted. */
 	void SetBlock(int32 X, int32 Y, int32 Z, uint8 BlockID);
 
 	/**
-	 * World-generation write. Writes the voxel but leaves bIsModified untouched.
-	 * Generated terrain is reproducible from the seed, so it must never be saved:
-	 * flagging it here would write a full 16 KB copy of every visited chunk.
+	 * World-generation write. Writes to PendingBlockData to avoid data races with the
+	 * game thread. The data is copied to BlockData at apply time.
 	 */
 	void SetBlockGenerated(int32 X, int32 Y, int32 Z, uint8 BlockID);
 
-	/** Builds mesh data into the provided buffers (thread-safe) */
+	/** Builds mesh data into the provided buffers (thread-safe, const) */
 	void GenerateMeshData(FChunkMeshData& OutSolidMeshData, FChunkMeshData& OutNonSolidMeshData) const;
 
 	/** Applies generated mesh data to the procedural mesh component (must run on GameThread) */
 	void ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FChunkMeshData& InNonSolidMeshData);
+
+	/**
+	 * Copy PendingBlockData to BlockData (game thread only).
+	 * Called when async generation completes.
+	 */
+	void ApplyPendingData();
+
+	/**
+	 * Apply pending mesh data to the PMC (game thread only).
+	 * Called when async meshing completes.
+	 */
+	void ApplyPendingMesh();
 
 	/** Rebuilds chunk mesh synchronously */
 	UFUNCTION(BlueprintCallable, Category = "Voxel")

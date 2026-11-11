@@ -1,0 +1,17 @@
+{
+  "sock_name": "weapon_r",
+  "methods": [
+    "__init__",
+    "__init_subclass__",
+    "_post_init",
+    "bone_name",
+    "get_socket_local_transform",
+    "initialize_socket_from_location",
+    "set_socket_local_transform",
+    "set_socket_parent"
+  ],
+  "set_socket_parent_str": "set_socket_parent() required argument 'bone_name' (pos 2) not found",
+  "set_socket_parent_sig_err": "no signature found for builtin <built-in method set_socket_parent of SkeletalMeshSocket object at 0x000001B6CF917E50>",
+  "set_bone_name": "SkeletalMeshSocket: Property 'BoneName' for attribute 'bone_name' on 'SkeletalMeshSocket' is read-only and cannot be set",
+  "set_rel_loc": "OK"
+}

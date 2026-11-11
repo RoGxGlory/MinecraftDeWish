@@ -1,0 +1,6 @@
+{
+  "0_err": "get_anim_pose_at_frame() required argument 'evaluation_options' (pos 2) not found",
+  "12_err": "get_anim_pose_at_frame() required argument 'evaluation_options' (pos 2) not found",
+  "20_err": "get_anim_pose_at_frame() required argument 'evaluation_options' (pos 2) not found",
+  "39_err": "get_anim_pose_at_frame() required argument 'evaluation_options' (pos 2) not found"
+}

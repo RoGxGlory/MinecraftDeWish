@@ -38,6 +38,44 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Mob|Visual")
 	static void GetMobTexturePaths(EMobType InType, FString& OutBaseColor, FString& OutNormal, FString& OutSpecular);
 
+	// ==================== STATE TREE / BEHAVIOR HELPERS (ADR-0009) ====================
+
+	/** Perceived target resolved by AMobAIController (player). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob|AI")
+	TWeakObjectPtr<AActor> CurrentTarget;
+
+	/** Enter patrol/wander state. */
+	UFUNCTION(BlueprintCallable, Category = "Mob|AI")
+	void StartPatrol();
+
+	/** Move toward the given target. */
+	UFUNCTION(BlueprintCallable, Category = "Mob|AI")
+	void ChaseTarget(AActor* Target);
+
+	/** Perform an attack on the target if cooldown allows. */
+	UFUNCTION(BlueprintCallable, Category = "Mob|AI")
+	void PerformAttack(AActor* Target);
+
+	/** Flee away from a threat. */
+	UFUNCTION(BlueprintCallable, Category = "Mob|AI")
+	void FleeFrom(AActor* Threat);
+
+	/** Begin creeper fuse toward target. */
+	UFUNCTION(BlueprintCallable, Category = "Mob|AI")
+	void StartFuse(AActor* Target);
+
+	/** Cancel an in-progress fuse. */
+	UFUNCTION(BlueprintCallable, Category = "Mob|AI")
+	void CancelFuse();
+
+	/** Tick an active fuse (radial damage + crater on completion). */
+	UFUNCTION(BlueprintCallable, Category = "Mob|AI")
+	void UpdateFuse(float DeltaTime, AActor* Target);
+
+	/** Returns the perception target from the AIController. */
+	UFUNCTION(BlueprintPure, Category = "Mob|AI")
+	AActor* GetPerceptionTarget() const;
+
 	// ==================== HEALTH ====================
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob|Health")
@@ -50,6 +88,16 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob|AI")
 	EMobAIState CurrentAIState = EMobAIState::Idle;
+
+	// ==================== ANIMATION (BlueprintReadOnly for ABP_Mob_Base) ====================
+
+	/** Current horizontal movement speed (cm/s). Drives the ABP locomotion state machine. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob|Animation")
+	float Speed = 0.0f;
+
+	/** True while the mob is falling. Drives jump/fall transitions in the ABP. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob|Animation")
+	bool bIsFalling = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob|AI")
 	float AttackCooldownTimer = 0.0f;
@@ -87,13 +135,23 @@ public:
 	/** Get the day/night cycle system from the world generator */
 	UDayNightCycleSystem* GetDayNightCycle() const;
 
+	/** Weather-driven aggression multiplier applied to movement speed */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Mob|AI")
+	float WeatherAggressionMultiplier = 1.0f;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
 private:
-	/** Handle sunlight burning */
+	/** Handle sunlight burning (legacy per-frame; retained for compatibility) */
 	void ProcessSunlightBurning(float DeltaTime);
+
+	/** Timer-driven sunlight burn (1.0s cadence) */
+	void ProcessSunlightBurningTimer();
+
+	/** Timer-driven mob update (10 Hz): spider climb, AI, anim state */
+	void MobUpdateTimer();
 
 	/** Handle spider wall climbing */
 	void ProcessSpiderClimbing(float DeltaTime);
@@ -117,15 +175,19 @@ private:
 	void ProcessWander(float DeltaTime);
 
 	/** Chase behavior */
-	void ProcessChase(float DeltaTime, APawn* Target);
+	void ProcessChase(float DeltaTime, AActor* Target);
 
 	/** Attack behavior */
-	void ProcessAttack(float DeltaTime, APawn* Target);
+	void ProcessAttack(float DeltaTime, AActor* Target);
 
 	/** Creeper explosion behavior */
-	void ProcessExplosion(float DeltaTime, APawn* Target);
+	void ProcessExplosion(float DeltaTime, AActor* Target);
 
 	float WanderTimer = 0.0f;
 	FVector WanderDirection = FVector::ZeroVector;
 	float SunBurnAccumulator = 0.0f;
+
+	/** Timer handles for tick-replacement (bCanEverTick = false per ADR-0009). */
+	FTimerHandle SunlightBurnTimerHandle;
+	FTimerHandle MobUpdateTimerHandle;
 };

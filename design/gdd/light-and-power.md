@@ -222,6 +222,7 @@ fortress the player will abandon.
 | System | Why | Status |
 |---|---|---|
 | Light query (`IsDark`) | The gate the lamps satisfy | Partial — `MobSpawnerSystem::CalculateLightLevel` exists, no general query |
+| Lighting & Power (`design/gdd/lighting-power.md`) | Light levels, torches, lamps, sodium, point-light pool, placement, fuel policy | Draft (this GDD is the canonical owner) |
 | Day/night cycle | `NightOnly` scheduling, night length | Implemented |
 | Angel hearing | Generator noise | Not implemented |
 | Camera observation | The thing power enables | Not implemented |

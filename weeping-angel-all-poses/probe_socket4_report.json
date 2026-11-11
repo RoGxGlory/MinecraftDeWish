@@ -1,0 +1,6 @@
+{
+  "init_sig": "(self, /, *args, **kwargs)",
+  "ctor_kwargs": "'socket_name' is an invalid keyword argument for call()",
+  "ctor_pos": "SkeletalMeshSocket: Failed to convert 'outer' (str) to 'Object'\n  TypeError: NativizeObject: Cannot nativize 'str' as 'Object' (allowed Class type: 'Object')",
+  "new_object": "OK: <Object '/Engine/Transient.weapon_r' (0x0000014E688AB700) Class 'SkeletalMeshSocket'>"
+}

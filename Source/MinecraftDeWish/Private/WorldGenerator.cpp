@@ -6,6 +6,7 @@
 #include "BlockCrackActor.h"
 #include "UObject/Interface.h"
 #include "Engine/World.h"
+#include "Components/PointLightComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Camera/PlayerCameraManager.h"
@@ -162,6 +163,9 @@ void AWorldGenerator::BeginPlay()
 		bHasPlayerCoord = true;
 	}
 
+	// Initialize torch light pool before any chunk generation that may need it
+	InitializeTorchLightPool();
+
 	// Pre-generate immediate 5x5 chunk spawn area so player spawns on solid terrain
 	for (int32 Dx = -2; Dx <= 2; ++Dx)
 	{
@@ -175,6 +179,7 @@ void AWorldGenerator::BeginPlay()
 				{
 					ActiveChunks.Add(Coord, Chunk);
 					GenerateChunkData(Chunk);
+					Chunk->ApplyPendingData();
 					Chunk->UpdateMesh();
 				}
 			}
@@ -223,6 +228,7 @@ void AWorldGenerator::Tick(float DeltaTime)
 	}
 
 	ProcessGenerationQueue();
+	ProcessCompletedAsyncMeshes();
 	ProcessRemeshQueue();
 	UpdateTargetBlockHighlight();
 	EnsureDestroySystemConfigured();
@@ -887,14 +893,129 @@ void AWorldGenerator::UpdateChunkStreaming()
 	LastFrameStats.StreamingMs += (FPlatformTime::Seconds() - StreamingStartSeconds) * 1000.0;
 }
 
+void AWorldGenerator::ProcessCompletedAsyncGens()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ProcessCompletedAsyncGens);
+
+	const double BudgetStartSeconds = FPlatformTime::Seconds();
+	const double BudgetMs = static_cast<double>(FMath::Max(MaxGenerationTimeMs, 0.5f));
+
+	for (int32 i = PendingAsyncGens.Num() - 1; i >= 0; --i)
+	{
+		FPendingAsyncChunkGen& Pending = PendingAsyncGens[i];
+		if (!Pending.Future.IsReady())
+		{
+			continue;
+		}
+
+		// Time budget for the game-thread apply (data copy + mesh launch).
+		const double ElapsedMs = (FPlatformTime::Seconds() - BudgetStartSeconds) * 1000.0;
+		if (ElapsedMs >= BudgetMs && i < PendingAsyncGens.Num() - 1)
+		{
+			// Defer remaining applies to the next frame.
+			break;
+		}
+
+		AChunkActor* Chunk = Pending.Chunk.Get();
+		if (IsValid(Chunk))
+		{
+			// Step 1: Apply pending data (copy temp buffer to BlockData) on game thread.
+			{
+				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ApplyPendingData);
+				Chunk->ApplyPendingData();
+			}
+
+			// Step 2: Launch meshing on a worker thread.
+			{
+				const double MeshLaunchStartSeconds = FPlatformTime::Seconds();
+				TFuture<void> MeshFuture = Async(EAsyncExecution::Thread, [this, Chunk]()
+				{
+					TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_GenerateChunkMesh_Async);
+					if (IsValid(Chunk))
+					{
+						Chunk->GenerateMeshData(Chunk->PendingSolidMeshData, Chunk->PendingNonSolidMeshData);
+						Chunk->bHasPendingMesh = true;
+					}
+				});
+				LastFrameStats.GenerationMs += (FPlatformTime::Seconds() - MeshLaunchStartSeconds) * 1000.0;
+
+				FPendingAsyncChunkMesh PendingMesh;
+				PendingMesh.Coord = Pending.Coord;
+				PendingMesh.Chunk = Chunk;
+				PendingMesh.Future = MoveTemp(MeshFuture);
+				PendingAsyncMeshes.Add(MoveTemp(PendingMesh));
+			}
+
+			++LastFrameStats.ChunksGenerated;
+		}
+
+		PendingAsyncGens.RemoveAt(i);
+	}
+}
+
+void AWorldGenerator::ProcessCompletedAsyncMeshes()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ProcessCompletedAsyncMeshes);
+
+	const double BudgetStartSeconds = FPlatformTime::Seconds();
+	const double BudgetMs = static_cast<double>(FMath::Max(MaxGenerationTimeMs, 0.5f));
+
+	for (int32 i = PendingAsyncMeshes.Num() - 1; i >= 0; --i)
+	{
+		FPendingAsyncChunkMesh& Pending = PendingAsyncMeshes[i];
+		if (!Pending.Future.IsReady())
+		{
+			continue;
+		}
+
+		const double ElapsedMs = (FPlatformTime::Seconds() - BudgetStartSeconds) * 1000.0;
+		if (ElapsedMs >= BudgetMs && i < PendingAsyncMeshes.Num() - 1)
+		{
+			break;
+		}
+
+		AChunkActor* Chunk = Pending.Chunk.Get();
+		if (IsValid(Chunk))
+		{
+			{
+				const double MeshStartSeconds = FPlatformTime::Seconds();
+				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ChunkApplyMesh);
+				Chunk->ApplyPendingMesh();
+				LastFrameStats.MeshMs += (FPlatformTime::Seconds() - MeshStartSeconds) * 1000.0;
+			}
+			{
+				const double NeighborStartSeconds = FPlatformTime::Seconds();
+				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_UpdateNeighborChunkMeshes);
+				UpdateNeighborChunkMeshes(Pending.Coord);
+				LastFrameStats.MeshMs += (FPlatformTime::Seconds() - NeighborStartSeconds) * 1000.0;
+			}
+		}
+
+		PendingAsyncMeshes.RemoveAt(i);
+	}
+}
+
 void AWorldGenerator::ProcessGenerationQueue()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ProcessGenerationQueue);
 
-	int32 GeneratedCount = 0;
+	// Drain completed async generations first (budget-bounded upload on the game thread).
+	ProcessCompletedAsyncGens();
 
-	while (GenerationQueue.Num() > 0 && GeneratedCount < MaxChunkGenerationsPerFrame)
+	const double BudgetStartSeconds = FPlatformTime::Seconds();
+	const double BudgetMs = static_cast<double>(FMath::Max(MaxGenerationTimeMs, 0.5f));
+
+	int32 LaunchedCount = 0;
+
+	while (GenerationQueue.Num() > 0)
 	{
+		// Time budget for launching async work (cheap: just spawns the task).
+		const double ElapsedMs = (FPlatformTime::Seconds() - BudgetStartSeconds) * 1000.0;
+		if (ElapsedMs >= BudgetMs && LaunchedCount > 0)
+		{
+			break;
+		}
+
 		const FChunkCoord Coord = GenerationQueue[0];
 		GenerationQueue.RemoveAt(0);
 
@@ -916,29 +1037,78 @@ void AWorldGenerator::ProcessGenerationQueue()
 		if (Chunk)
 		{
 			ActiveChunks.Add(Coord, Chunk);
+
+			const double GenerationStartSeconds = FPlatformTime::Seconds();
+			if (IsValid(Chunk))
 			{
-				const double GenerationStartSeconds = FPlatformTime::Seconds();
-				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_GenerateChunkData);
 				GenerateChunkData(Chunk);
-				LastFrameStats.GenerationMs += (FPlatformTime::Seconds() - GenerationStartSeconds) * 1000.0;
-			}
-			{
-				const double MeshStartSeconds = FPlatformTime::Seconds();
-				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_ChunkUpdateMesh);
+				Chunk->ApplyPendingData();
 				Chunk->UpdateMesh();
-				LastFrameStats.MeshMs += (FPlatformTime::Seconds() - MeshStartSeconds) * 1000.0;
 			}
-			{
-				const double NeighborStartSeconds = FPlatformTime::Seconds();
-				TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_UpdateNeighborChunkMeshes);
-				UpdateNeighborChunkMeshes(Coord);
-				LastFrameStats.MeshMs += (FPlatformTime::Seconds() - NeighborStartSeconds) * 1000.0;
-			}
-			++LastFrameStats.ChunksGenerated;
-			++GeneratedCount;
+			LastFrameStats.GenerationMs += (FPlatformTime::Seconds() - GenerationStartSeconds) * 1000.0;
+
+			++LaunchedCount;
 		}
 
 		GeneratingChunks.Remove(Coord);
+	}
+}
+
+void AWorldGenerator::InitializeTorchLightPool()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_InitializeTorchLightPool);
+
+	TorchLightPool.Empty();
+	TorchLightInUse.Empty();
+	TorchLightPool.Reserve(MaxTorchLights);
+	TorchLightInUse.Reserve(MaxTorchLights);
+
+	for (int32 i = 0; i < MaxTorchLights; ++i)
+	{
+		UPointLightComponent* Light = NewObject<UPointLightComponent>(this);
+		if (Light)
+		{
+			Light->SetMobility(EComponentMobility::Movable);
+			Light->SetIntensity(2500.0f);
+			Light->SetAttenuationRadius(900.0f);
+			Light->SetLightColor(FLinearColor(1.0f, 0.78f, 0.50f));
+			Light->SetCastShadows(false);
+			Light->SetVisibility(false);
+			Light->RegisterComponentWithWorld(GetWorld());
+			TorchLightPool.Add(Light);
+			TorchLightInUse.Add(false);
+		}
+	}
+}
+
+UPointLightComponent* AWorldGenerator::AcquireTorchLight()
+{
+	for (int32 i = 0; i < TorchLightPool.Num(); ++i)
+	{
+		if (!TorchLightInUse[i] && TorchLightPool[i])
+		{
+			TorchLightInUse[i] = true;
+			TorchLightPool[i]->SetVisibility(true);
+			return TorchLightPool[i];
+		}
+	}
+	return nullptr;
+}
+
+void AWorldGenerator::ReleaseTorchLight(UPointLightComponent* Light)
+{
+	if (!Light)
+	{
+		return;
+	}
+	for (int32 i = 0; i < TorchLightPool.Num(); ++i)
+	{
+		if (TorchLightPool[i] == Light)
+		{
+			TorchLightInUse[i] = false;
+			Light->SetVisibility(false);
+			return;
+		}
 	}
 }
 
@@ -969,21 +1139,73 @@ AChunkActor* AWorldGenerator::SpawnChunk(const FChunkCoord& Coord)
 
 void AWorldGenerator::UpdateNeighborChunkMeshes(const FChunkCoord& CenterCoord)
 {
-	const FChunkCoord Neighbors[] = {
-		FChunkCoord(CenterCoord.X + 1, CenterCoord.Y),
-		FChunkCoord(CenterCoord.X - 1, CenterCoord.Y),
-		FChunkCoord(CenterCoord.X, CenterCoord.Y + 1),
-		FChunkCoord(CenterCoord.X, CenterCoord.Y - 1)
+	TRACE_CPUPROFILER_EVENT_SCOPE(AWorldGenerator_UpdateNeighborChunkMeshes);
+
+	AChunkActor* const* CenterFound = ActiveChunks.Find(CenterCoord);
+	if (!CenterFound || !*CenterFound)
+	{
+		return;
+	}
+	AChunkActor* CenterChunk = *CenterFound;
+
+	// Only remesh a neighbour when the freshly generated chunk has non-air blocks
+	// touching the shared border: otherwise the neighbour's faces were already
+	// correct (the centre was treated as air) and the remesh is pure waste.
+	struct FBorderCheck
+	{
+		int32 Dx;
+		int32 Dy;
+		int32 BorderX; // column in the centre chunk to inspect
+		int32 BorderY;
+		bool bInspectX;
+	};
+	const FBorderCheck Checks[] = {
+		{ +1,  0, CHUNK_SIZE_X - 1, -1, true  }, // neighbour +X  -> centre's +X face
+		{ -1,  0, 0,               -1, true  }, // neighbour -X  -> centre's -X face
+		{  0, +1, -1, CHUNK_SIZE_Y - 1, false }, // neighbour +Y  -> centre's +Y face
+		{  0, -1, -1, 0,               false }, // neighbour -Y  -> centre's -Y face
 	};
 
-	for (const FChunkCoord& Neighbor : Neighbors)
+	for (const FBorderCheck& Check : Checks)
 	{
-		if (AChunkActor* const* Found = ActiveChunks.Find(Neighbor))
+		FChunkCoord NeighborCoord(CenterCoord.X + Check.Dx, CenterCoord.Y + Check.Dy);
+		AChunkActor* const* Found = ActiveChunks.Find(NeighborCoord);
+		if (!Found || !*Found)
 		{
-			if (*Found)
+			continue;
+		}
+
+		bool bHasNonAirBorder = false;
+		if (Check.bInspectX)
+		{
+			for (int32 Y = 0; Y < CHUNK_SIZE_Y && !bHasNonAirBorder; ++Y)
 			{
-				(*Found)->UpdateMesh();
+				for (int32 Z = 0; Z < CenterChunk->ChunkHeight && !bHasNonAirBorder; ++Z)
+				{
+					if (CenterChunk->GetBlock(Check.BorderX, Y, Z) != 0)
+					{
+						bHasNonAirBorder = true;
+					}
+				}
 			}
+		}
+		else
+		{
+			for (int32 X = 0; X < CHUNK_SIZE_X && !bHasNonAirBorder; ++X)
+			{
+				for (int32 Z = 0; Z < CenterChunk->ChunkHeight && !bHasNonAirBorder; ++Z)
+				{
+					if (CenterChunk->GetBlock(X, Check.BorderY, Z) != 0)
+					{
+						bHasNonAirBorder = true;
+					}
+				}
+			}
+		}
+
+		if (bHasNonAirBorder)
+		{
+			(*Found)->UpdateMesh();
 		}
 	}
 }
@@ -1617,6 +1839,364 @@ bool AWorldGenerator::PlaceBlock(const FVector& WorldLocation, uint8 BlockID)
 		}
 	}
 	return false;
+}
+
+EPlaceBlockResult AWorldGenerator::TryPlaceBlock(
+	const FIntVector& Voxel,
+	uint8 BlockID,
+	uint8 Meta,
+	bool bPlayerInitiated,
+	bool bConsumeItem,
+	const FVector& ReachOrigin,
+	const FVector& ReachTarget)
+{
+	// G5 — bounds check
+	if (Voxel.Z < 0 || Voxel.Z >= ChunkHeight)
+	{
+		LastPlacementResult = EPlaceBlockResult::OutOfBounds;
+		return LastPlacementResult;
+	}
+
+	// G2 — placeable block check
+	if (!FPlacementRules::IsPlaceableBlock(BlockID))
+	{
+		LastPlacementResult = EPlaceBlockResult::NotPlaceable;
+		return LastPlacementResult;
+	}
+
+	// G1 — reach check (player-initiated only)
+	if (bPlayerInitiated)
+	{
+		const float DistSq = FVector::DistSquared(ReachOrigin, ReachTarget);
+		const float MaxReach = 400.0f; // 4 blocks
+		if (DistSq > FMath::Square(MaxReach + 50.0f)) // 50 UU tolerance
+		{
+			LastPlacementResult = EPlaceBlockResult::OutOfReach;
+			return LastPlacementResult;
+		}
+	}
+
+	// G4 — cooldown check
+	if (bPlayerInitiated)
+	{
+		const double Now = FPlatformTime::Seconds();
+		if (Now - LastPlaceTimeSeconds < 0.2) // 200ms cooldown
+		{
+			LastPlacementResult = EPlaceBlockResult::Cooldown;
+			return LastPlacementResult;
+		}
+	}
+
+	// G6 — chunk loaded check
+	AChunkActor* Chunk = FindChunkAt(Voxel.X, Voxel.Y);
+	if (!Chunk)
+	{
+		LastPlacementResult = EPlaceBlockResult::ChunkUnloaded;
+		return LastPlacementResult;
+	}
+
+	// G7 — occupied check
+	uint8 ExistingBlock = 0;
+	GetVoxelAt(Voxel.X, Voxel.Y, Voxel.Z, ExistingBlock);
+	if (ExistingBlock != static_cast<uint8>(EBlockType::Air) &&
+		!FPlacementRules::IsReplaceableBlock(ExistingBlock))
+	{
+		LastPlacementResult = EPlaceBlockResult::Occupied;
+		return LastPlacementResult;
+	}
+
+	// G8 — support check
+	auto BlockLookup = [this](const FIntVector& V) -> uint8
+	{
+		uint8 ID = 0;
+		GetVoxelAt(V.X, V.Y, V.Z, ID);
+		return ID;
+	};
+	if (!FPlacementRules::HasSupportFromNeighbours(Voxel, BlockLookup))
+	{
+		LastPlacementResult = EPlaceBlockResult::NoSupport;
+		return LastPlacementResult;
+	}
+
+	// G9 — attach direction (for torches and attaching blocks)
+	FIntVector AttachDir = FIntVector::ZeroValue;
+	EPlaceBlockResult AttachResult = ResolveAttachDirection(Voxel, BlockID, FIntVector::ZeroValue, AttachDir);
+	if (AttachResult != EPlaceBlockResult::Success)
+	{
+		LastPlacementResult = AttachResult;
+		return LastPlacementResult;
+	}
+
+	// G10 — pawn overlap check
+	if (AnyPawnOverlapsVoxel(Voxel))
+	{
+		LastPlacementResult = EPlaceBlockResult::BlockedByPawn;
+		return LastPlacementResult;
+	}
+
+	// G3 — item consumption
+	if (bConsumeItem)
+	{
+		if (!ConsumePlacementItem(BlockID))
+		{
+			LastPlacementResult = EPlaceBlockResult::NoItem;
+			return LastPlacementResult;
+		}
+	}
+
+	// Commit: write the block
+	const int32 ChunkX = FMath::FloorToInt(static_cast<float>(Voxel.X) / static_cast<float>(CHUNK_SIZE_X));
+	const int32 ChunkY = FMath::FloorToInt(static_cast<float>(Voxel.Y) / static_cast<float>(CHUNK_SIZE_Y));
+	const FChunkCoord Coord(ChunkX, ChunkY);
+
+	if (AChunkActor* const* FoundChunk = ActiveChunks.Find(Coord))
+	{
+		if (*FoundChunk)
+		{
+			const int32 LocalX = Voxel.X - (ChunkX * CHUNK_SIZE_X);
+			const int32 LocalY = Voxel.Y - (ChunkY * CHUNK_SIZE_Y);
+
+			(*FoundChunk)->SetBlock(LocalX, LocalY, Voxel.Z, BlockID);
+			(*FoundChunk)->UpdateMesh();
+			RemeshVoxelNeighbourhood(Voxel);
+
+			// Handle torch placement metadata
+			uint8 EncodedMeta = 0;
+			if (BlockID == static_cast<uint8>(EBlockType::Torch) || BlockID == 19)
+			{
+				EncodedMeta = FPlacementRules::EncodeAttachMeta(AttachDir);
+				(*FoundChunk)->SetBlockWithMeta(LocalX, LocalY, Voxel.Z, BlockID, EncodedMeta);
+			}
+
+			// Cascade support loss for replaced blocks
+			if (ExistingBlock != static_cast<uint8>(EBlockType::Air))
+			{
+				CascadeSupportLoss(Voxel, 0);
+			}
+
+			LastPlaceTimeSeconds = FPlatformTime::Seconds();
+			PlayPlacementFeedback(Voxel, BlockID, EncodedMeta);
+			EmitPlacementNoise(Voxel, BlockID);
+
+			LastPlacementResult = EPlaceBlockResult::Success;
+			return LastPlacementResult;
+		}
+	}
+
+	LastPlacementResult = EPlaceBlockResult::ChunkUnloaded;
+	return LastPlacementResult;
+}
+
+AChunkActor* AWorldGenerator::FindChunkAt(int32 WorldX, int32 WorldY) const
+{
+	const int32 ChunkX = FMath::FloorToInt(static_cast<float>(WorldX) / static_cast<float>(CHUNK_SIZE_X));
+	const int32 ChunkY = FMath::FloorToInt(static_cast<float>(WorldY) / static_cast<float>(CHUNK_SIZE_Y));
+	const FChunkCoord Coord(ChunkX, ChunkY);
+	if (const AChunkActor* const* Found = ActiveChunks.Find(Coord))
+	{
+		return const_cast<AChunkActor*>(*Found);
+	}
+	return nullptr;
+}
+
+bool AWorldGenerator::PlaceBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, uint8 BlockID, uint8 Meta, bool bPlayerInitiated)
+{
+	if (VoxelZ < 0 || VoxelZ >= ChunkHeight) return false;
+	if (BlockID == 0) return false;
+
+	const FIntVector Voxel(VoxelX, VoxelY, VoxelZ);
+	EPlaceBlockResult Result = TryPlaceBlock(Voxel, BlockID, Meta, bPlayerInitiated, false, FVector::ZeroVector, FVector::ZeroVector);
+	return Result == EPlaceBlockResult::Success;
+}
+
+bool AWorldGenerator::AnyPawnOverlapsVoxel(const FIntVector& Voxel) const
+{
+	// Check player capsule
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<APawn> It(World); It; ++It)
+		{
+			APawn* Pawn = *It;
+			if (!Pawn) continue;
+			FVector CapsuleCenter = Pawn->GetActorLocation();
+			float CapsuleRadius = 34.0f; // default
+			float CapsuleHalfHeight = 88.0f; // default
+			if (UCapsuleComponent* Capsule = Pawn->FindComponentByClass<UCapsuleComponent>())
+			{
+				CapsuleRadius = Capsule->GetScaledCapsuleRadius();
+				CapsuleHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+			}
+			FBox VoxelBox(
+				FVector(Voxel.X * BlockScale, Voxel.Y * BlockScale, Voxel.Z * BlockScale),
+				FVector((Voxel.X + 1) * BlockScale, (Voxel.Y + 1) * BlockScale, (Voxel.Z + 1) * BlockScale));
+			if (FPlacementRules::VoxelOverlapsCapsule(Voxel, BlockScale, CapsuleCenter, CapsuleRadius, CapsuleHalfHeight, 5.0f))
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool AWorldGenerator::ConsumePlacementItem(uint8 BlockID)
+{
+	// Find the player's quick slot holding this block
+	if (UWorld* World = GetWorld())
+	{
+		if (APlayerController* PC = World->GetFirstPlayerController())
+		{
+			if (APawn* Pawn = PC->GetPawn())
+			{
+				for (int32 i = 0; i < 9; ++i)
+				{
+					FQuickSlotData SlotData = UQuickSlotsInventorySystem::GetQuickSlotData(i);
+					if (SlotData.BlockID == BlockID && SlotData.ItemCount > 0)
+					{
+						SlotData.ItemCount--;
+						if (SlotData.ItemCount <= 0)
+						{
+							SlotData.BlockID = 0;
+							SlotData.ItemCount = 0;
+						}
+						UQuickSlotsInventorySystem::SetQuickSlotData(i, SlotData);
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
+
+EPlaceBlockResult AWorldGenerator::ResolveAttachDirection(const FIntVector& Voxel, uint8 BlockID, const FIntVector& NormalStep, FIntVector& OutAttachDir) const
+{
+	// For torches (attaching blocks), resolve the attachment direction
+	if (BlockID == static_cast<uint8>(EBlockType::Torch) || BlockID == 19)
+	{
+		// Check each face direction for a valid support
+		const FIntVector Directions[] = {
+			FIntVector(0, 0, -1), // floor
+			FIntVector(1, 0, 0),  // +X wall
+			FIntVector(-1, 0, 0), // -X wall
+			FIntVector(0, 1, 0),  // +Y wall
+			FIntVector(0, -1, 0), // -Y wall
+		};
+		for (const FIntVector& Dir : Directions)
+		{
+			uint8 NeighborBlock = 0;
+			GetVoxelAt(Voxel.X + Dir.X, Voxel.Y + Dir.Y, Voxel.Z + Dir.Z, NeighborBlock);
+			if (FPlacementRules::IsSupportBlock(NeighborBlock))
+			{
+				OutAttachDir = Dir;
+				return EPlaceBlockResult::Success;
+			}
+		}
+		return EPlaceBlockResult::BadAttach;
+	}
+	// Non-attaching blocks: no attach direction needed
+	OutAttachDir = FIntVector(0, 0, -1); // default floor
+	return EPlaceBlockResult::Success;
+}
+
+void AWorldGenerator::PlayPlacementFeedback(const FIntVector& Voxel, uint8 BlockID, uint8 Meta)
+{
+	// Play placement sound
+	if (UWorld* World = GetWorld())
+	{
+		FVector Location = FVector(Voxel.X * BlockScale + BlockScale * 0.5f, Voxel.Y * BlockScale + BlockScale * 0.5f, Voxel.Z * BlockScale + BlockScale * 0.5f);
+		// Sound cue would be played here via UGameplayStatics::PlaySoundAtLocation
+		// For now, log
+		UE_LOG(LogTemp, Log, TEXT("Placed block %d at (%d, %d, %d)"), BlockID, Voxel.X, Voxel.Y, Voxel.Z);
+	}
+}
+
+FName AWorldGenerator::GetPlacementCueName(uint8 BlockID) const
+{
+	if (BlockID == static_cast<uint8>(EBlockType::Torch) || BlockID == 19)
+	{
+		return FName("SFX_Torch");
+	}
+	return FName("SFX_BlockPlace_Stone"); // default
+}
+
+void AWorldGenerator::EmitPlacementNoise(const FIntVector& Voxel, uint8 BlockID)
+{
+	int32 Loudness = FPlacementRules::GetPlaceNoiseLoudness(BlockID, 6, 2);
+	// Emit noise event (would trigger mob awareness, etc.)
+	UE_LOG(LogTemp, Log, TEXT("Placement noise emitted: loudness=%d at (%d, %d, %d)"), Loudness, Voxel.X, Voxel.Y, Voxel.Z);
+}
+
+void AWorldGenerator::CascadeSupportLoss(const FIntVector& Voxel, int32 Depth)
+{
+	// Pop attached blocks (torches) whose support just disappeared
+	// Check each face-adjacent voxel
+	const FIntVector Directions[] = {
+		FIntVector(1, 0, 0), FIntVector(-1, 0, 0),
+		FIntVector(0, 1, 0), FIntVector(0, -1, 0),
+		FIntVector(0, 0, 1), FIntVector(0, 0, -1)
+	};
+	for (const FIntVector& Dir : Directions)
+	{
+		FIntVector NeighborVoxel = Voxel + Dir;
+		uint8 NeighborBlock = 0;
+		GetVoxelAt(NeighborVoxel.X, NeighborVoxel.Y, NeighborVoxel.Z, NeighborBlock);
+		if (NeighborBlock == static_cast<uint8>(EBlockType::Torch) || NeighborBlock == 19)
+		{
+			// Check if the torch still has support
+			FIntVector AttachDir = FIntVector::ZeroValue;
+			if (ResolveAttachDirection(NeighborVoxel, NeighborBlock, FIntVector::ZeroValue, AttachDir) != EPlaceBlockResult::Success)
+			{
+				// Torch lost support, remove it
+				uint8 DroppedID = 0;
+				BreakBlockAtVoxel(NeighborVoxel.X, NeighborVoxel.Y, NeighborVoxel.Z, DroppedID);
+				if (Depth < 4)
+				{
+					CascadeSupportLoss(NeighborVoxel, Depth + 1);
+				}
+			}
+		}
+	}
+}
+
+void AWorldGenerator::RemeshVoxelNeighbourhood(const FIntVector& Voxel)
+{
+	// Remesh the owning chunk and any chunk touching a voxel on a chunk border
+	const int32 ChunkX = FMath::FloorToInt(static_cast<float>(Voxel.X) / static_cast<float>(CHUNK_SIZE_X));
+	const int32 ChunkY = FMath::FloorToInt(static_cast<float>(Voxel.Y) / static_cast<float>(CHUNK_SIZE_Y));
+	const FChunkCoord Coord(ChunkX, ChunkY);
+
+	if (AChunkActor* const* FoundChunk = ActiveChunks.Find(Coord))
+	{
+		if (*FoundChunk)
+		{
+			(*FoundChunk)->UpdateMesh();
+		}
+	}
+
+	// Check chunk borders
+	const int32 LocalX = Voxel.X - (ChunkX * CHUNK_SIZE_X);
+	const int32 LocalY = Voxel.Y - (ChunkY * CHUNK_SIZE_Y);
+
+	if (LocalX == 0)
+	{
+		if (AChunkActor* const* Neighbor = ActiveChunks.Find(FChunkCoord(ChunkX - 1, ChunkY)))
+			if (*Neighbor) (*Neighbor)->UpdateMesh();
+	}
+	else if (LocalX == CHUNK_SIZE_X - 1)
+	{
+		if (AChunkActor* const* Neighbor = ActiveChunks.Find(FChunkCoord(ChunkX + 1, ChunkY)))
+			if (*Neighbor) (*Neighbor)->UpdateMesh();
+	}
+	if (LocalY == 0)
+	{
+		if (AChunkActor* const* Neighbor = ActiveChunks.Find(FChunkCoord(ChunkX, ChunkY - 1)))
+			if (*Neighbor) (*Neighbor)->UpdateMesh();
+	}
+	else if (LocalY == CHUNK_SIZE_Y - 1)
+	{
+		if (AChunkActor* const* Neighbor = ActiveChunks.Find(FChunkCoord(ChunkX, ChunkY + 1)))
+			if (*Neighbor) (*Neighbor)->UpdateMesh();
+	}
 }
 
 bool AWorldGenerator::TraceForBlock(

@@ -1,0 +1,135 @@
+name: UE 5.8 Build & Automation Tests
+
+# Continuous integration for MinecraftDeWish (Unreal Engine 5.8, Windows).
+# Runs on every push / pull request against the integration and release branches.
+# Requires a self-hosted Windows runner with UE 5.8 installed (see Docs/devops/ci-setup.md).
+
+on:
+  push:
+    branches: [main, develop, 'release/*', 'hotfix/*']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      ue_root:
+        description: 'Override UE install root on the runner'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_NAME: MinecraftDeWish
+  UPROJECT: MinecraftDeWish.uproject
+  # Default install location; override via workflow_dispatch input or runner env.
+  UE_ROOT: ${{ github.event.inputs.ue_root || '' }}
+
+jobs:
+  build-editor:
+    name: Build Editor Target (Win64 Development)
+    runs-on: [self-hosted, windows, ue-5.8]
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      - name: Resolve UE_ROOT
+        id: ue
+        shell: pwsh
+        run: |
+          $root = $env:UE_ROOT
+          if ([string]::IsNullOrWhiteSpace($root)) { $root = $env:UE_ROOT_RUNNER }
+          if ([string]::IsNullOrWhiteSpace($root)) { $root = 'C:\Program Files\Epic Games\UE_5.8' }
+          if (-not (Test-Path (Join-Path $root 'Engine\Build\BatchFiles\Build.bat'))) {
+            Write-Error "Unreal Engine 5.8 not found at '$root'. Set UE_ROOT (workflow input) or the UE_ROOT_RUNNER env var on the runner."
+            exit 1
+          }
+          "UE_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Using UE_ROOT=$root"
+
+      - name: Restore Derived Data Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            DerivedDataCache
+            Engine/DerivedDataCache
+          key: ddc-${{ runner.os }}-${{ hashFiles('**/*.uasset', '**/*.umap') }}
+          restore-keys: |
+            ddc-${{ runner.os }}-
+
+      - name: Build Editor target
+        shell: pwsh
+        run: |
+          $buildBat = Join-Path $env:UE_ROOT 'Engine\Build\BatchFiles\Build.bat'
+          & $buildBat "${{ env.PROJECT_NAME }}Editor" Win64 Development `
+            "-Project=$env:GITHUB_WORKSPACE\$env:UPROJECT" -WaitMutex -FromMsBuild
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Build failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            Saved/Logs/*.log
+            Intermediate/Build/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  automation-tests:
+    name: Automation Tests (8+ suites)
+    needs: build-editor
+    runs-on: [self-hosted, windows, ue-5.8]
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      - name: Resolve UE_ROOT
+        shell: pwsh
+        run: |
+          $root = $env:UE_ROOT
+          if ([string]::IsNullOrWhiteSpace($root)) { $root = $env:UE_ROOT_RUNNER }
+          if ([string]::IsNullOrWhiteSpace($root)) { $root = 'C:\Program Files\Epic Games\UE_5.8' }
+          if (-not (Test-Path (Join-Path $root 'Engine\Build\BatchFiles\RunUAT.bat'))) {
+            Write-Error "Unreal Engine 5.8 not found at '$root'."
+            exit 1
+          }
+          "UE_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run automation tests
+        shell: pwsh
+        run: |
+          $uat = Join-Path $env:UE_ROOT 'Engine\Build\BatchFiles\RunUAT.bat'
+          $reportDir = Join-Path $env:GITHUB_WORKSPACE 'TestResults'
+          New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
+          & $uat RunAutomationTests `
+            "-project=$env:GITHUB_WORKSPACE\$env:UPROJECT" `
+            -platform=Win64 -configuration=Development `
+            -test="${{ env.PROJECT_NAME }}" -nullrhi -unattended -nopause `
+            "-ReportOutputPath=$reportDir"
+          $code = $LASTEXITCODE
+          Write-Host "RunUAT exit code: $code"
+          if ($code -ne 0) { exit $code }
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automation-test-report
+          path: TestResults/**
+          if-no-files-found: warn
+          retention-days: 30

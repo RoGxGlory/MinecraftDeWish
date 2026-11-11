@@ -1,0 +1,6 @@
+{
+  "add_socket_sig_err": "no signature found for builtin <built-in method add_socket of SkeletalMesh object at 0x0000017A91307E50>",
+  "add_socket_call1": "SkeletalMesh: Failed to convert parameter 'socket' when calling function 'SkeletalMesh.AddSocket' on 'SKM_Manny_Simple'\n  TypeError: NativizeProperty: Cannot nativize 'str' as 'InSocket' (ObjectProperty)\n    TypeError: NativizeObject: Cannot nativize 'str' as 'Object' (allowed Class type: 'SkeletalMeshSocket')",
+  "num_sockets": 5,
+  "find_socket": "None"
+}

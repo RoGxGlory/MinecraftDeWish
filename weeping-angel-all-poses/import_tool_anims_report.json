@@ -1,0 +1,29 @@
+{
+  "imported": [
+    {
+      "name": "A_Tool_Swing_Generic",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Generic"
+    },
+    {
+      "name": "A_Tool_Swing_Pickaxe",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Pickaxe"
+    },
+    {
+      "name": "A_Tool_Swing_Shovel",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Shovel"
+    },
+    {
+      "name": "A_Tool_Swing_Axe",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Axe"
+    },
+    {
+      "name": "A_Tool_Swing_Hoe",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Hoe"
+    },
+    {
+      "name": "A_Tool_Swing_Sword",
+      "path": "/Game/Characters/Arms/Anims/A_Tool_Swing_Sword"
+    }
+  ],
+  "errors": []
+}
