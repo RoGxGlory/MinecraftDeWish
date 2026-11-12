@@ -356,7 +356,12 @@ public:
 	int32 GetPredictedTerrainHeight(int32 WorldX, int32 WorldY) const;
 
 	/** Query voxel at global block coordinates */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
 	bool GetVoxelAt(int32 WorldBlockX, int32 WorldBlockY, int32 WorldBlockZ, uint8& OutBlockID) const;
+
+	/** Query voxel at global block coordinates, returning the ID directly (Air when out of the world). */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Voxel")
+	uint8 GetBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ) const;
 
 	/** Query voxel at Unreal world location */
 	UFUNCTION(BlueprintCallable, Category = "World Generation|Interaction")
@@ -452,6 +457,20 @@ public:
 	/** Outcome of the most recent placement attempt. Silent in the world, precise in the logs. */
 	UFUNCTION(BlueprintPure, Category = "World Generation|Interaction")
 	EPlaceBlockResult GetLastPlacementResult() const { return LastPlacementResult; }
+
+	/**
+	 * Impact normal of the most recent successful `TraceForBlock`.
+	 * Feeds `ResolvePlacementVoxel` and `AttachDirectionFromNormal`.
+	 */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Interaction")
+	FVector GetLastTargetedHitNormal() const { return LastTargetedHitNormal; }
+
+	/**
+	 * Impact point (world space) of the most recent successful `TraceForBlock`.
+	 * Feeds `ResolvePlacementVoxel` and the reach gate.
+	 */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Interaction")
+	FVector GetLastTargetedHitPoint() const { return LastTargetedHitPoint; }
 
 	/** Line trace helper to find block to break and block placement location */
 	UFUNCTION(BlueprintCallable, Category = "World Generation|Interaction")
@@ -691,8 +710,23 @@ public:
 	/** Return a torch light to the global pool. */
 	void ReleaseTorchLight(UPointLightComponent* Light);
 
-	/** Runs the placement pipeline (10 gates). Public for GameplayPlayerController. */
-	/** Runs the placement pipeline (10 gates). */
+	/**
+	 * Runs the full ten-gate placement pipeline and, on success, commits the block.
+	 *
+	 * This is the authoritative C++ entry point; a Blueprint may call it directly to place
+	 * a block at an exact voxel. Use `CanPlaceAtVoxel` first if you need to inspect the
+	 * rejection reason without committing.
+	 *
+	 * @param Voxel            Global voxel to write.
+	 * @param BlockID          Block to place (0 and non-placeable IDs are rejected).
+	 * @param Meta             Attachment/rotation metadata (torch: 0 floor, 1..4 wall).
+	 * @param bPlayerInitiated Enables the reach (G1) and cooldown (G4) gates.
+	 * @param bConsumeItem     Decrement the matching quick slot on success (G3).
+	 * @param ReachOrigin      Camera location, for G1. Ignored when not player-initiated.
+	 * @param ReachTarget      Impact point, for G1. Ignored when not player-initiated.
+	 * @return Success, or the first gate that rejected the request.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "World Generation|Placement")
 	EPlaceBlockResult TryPlaceBlock(
 		const FIntVector& Voxel,
 		uint8 BlockID,
@@ -701,6 +735,45 @@ public:
 		bool bConsumeItem,
 		const FVector& ReachOrigin,
 		const FVector& ReachTarget);
+
+	/**
+	 * Dry run of the placement pipeline: evaluates G1, G2 and G4-G10 but writes nothing,
+	 * consumes nothing and does not start the cooldown. Safe to call every frame for a
+	 * placement ghost.
+	 *
+	 * G3 (quick-slot ownership) is intentionally not evaluated here: it belongs to the
+	 * inventory, not the world. Call `TryPlaceBlock` with `bConsumeItem` for the authoritative
+	 * check, or query the quick-slot system yourself.
+	 *
+	 * @return Success when the world-side gates pass, otherwise the first failing gate.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "World Generation|Placement")
+	EPlaceBlockResult CanPlaceAtVoxel(
+		const FIntVector& Voxel,
+		uint8 BlockID,
+		bool bPlayerInitiated,
+		const FVector& ReachOrigin,
+		const FVector& ReachTarget) const;
+
+	/** Global voxel index of a world location (floor division, §4.1). */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Placement")
+	FIntVector ResolveVoxelFromWorld(const FVector& WorldLocation) const;
+
+	/**
+	 * Placement voxel derived from a crosshair hit (§4.2): recover the hit voxel by stepping
+	 * 0.25 blocks inward, then step one full voxel along the dominant axis of the normal.
+	 */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Placement")
+	FIntVector ResolvePlacementVoxel(const FVector& ImpactPoint, const FVector& ImpactNormal) const;
+
+	/** Block edge length in Unreal units (100 by default, ADR-0001). */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Placement")
+	float GetBlockScale() const { return BlockScale; }
+
+	/** Cooldown between two successful player placements, in seconds (G4, §3.9). */
+	UFUNCTION(BlueprintPure, Category = "World Generation|Placement")
+	float GetPlaceCooldown() const { return PlaceCooldown; }
+
 
 protected:
 	virtual void BeginPlay() override;
@@ -873,11 +946,18 @@ private:
 	/** G10 — true when any pawn capsule (player or mob) overlaps the voxel. */
 	bool AnyPawnOverlapsVoxel(const FIntVector& Voxel) const;
 
-	/** G3 — consumes one item from the quick slot holding `BlockID`. */
+	/** G3 — consumes one item from the selected quick slot (GDD §3.8). */
 	bool ConsumePlacementItem(uint8 BlockID);
 
-	/** Resolves the attachment direction of an attaching block, or `BadAttach`. */
-	EPlaceBlockResult ResolveAttachDirection(const FIntVector& Voxel, uint8 BlockID, const FIntVector& NormalStep, FIntVector& OutAttachDir) const;
+	/**
+	 * Resolves the attachment direction of an attaching block, or `BadAttach`.
+	 *
+	 * `MetaHint` is the caller's suggested attachment (0..4, the torch encoding). It is used
+	 * only when it names a face that really carries a support block; otherwise the first
+	 * supported face (floor first) wins. The resolved direction is then checked against
+	 * `bAllowWallTorches` / `bAllowCeilingTorches`, so a disabled mount fails with BadAttach.
+	 */
+	EPlaceBlockResult ResolveAttachDirection(const FIntVector& Voxel, uint8 BlockID, uint8 MetaHint, FIntVector& OutAttachDir) const;
 
 	/** Plays the placement cue at the voxel and fires `OnBlockPlaced`. */
 	void PlayPlacementFeedback(const FIntVector& Voxel, uint8 BlockID, uint8 Meta);

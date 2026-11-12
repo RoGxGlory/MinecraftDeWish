@@ -17,6 +17,16 @@ class MINECRAFTDEWISH_API AGameplayPlayerController : public APlayerController
 public:
 	AGameplayPlayerController();
 
+	/**
+	 * Whether the C++ `HandlePlacePressed` runs the full placement pipeline.
+	 *
+	 * Off by default: a Blueprint binds IA_PlaceBlock and owns the placement graph. Leaving
+	 * this false is what prevents a double commit when both the C++ binding and a Blueprint
+	 * binding react to the same key. Turn it on only to test the C++ path alone.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Placement")
+	bool bCppOwnsPlacement = false;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;

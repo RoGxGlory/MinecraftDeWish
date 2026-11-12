@@ -96,6 +96,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|QuickSlots")
 	static FQuickSlotData GetQuickSlotData(int32 SlotIndex);
 
+	/**
+	 * Quantity of items in a quick slot (0 when the slot is empty or the index is out of range).
+	 * 0-based index: 0..8. This is the reliable read for "how many do I have here" — it
+	 * never reports a stale count for a slot whose block was consumed.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|QuickSlots")
+	static int32 GetQuickSlotItemCount(int32 SlotIndex);
+
+	/** Block ID stored in a quick slot (0 when the slot is empty or the index is out of range). */
+	UFUNCTION(BlueprintPure, Category = "Inventory|QuickSlots")
+	static uint8 GetQuickSlotBlockID(int32 SlotIndex);
+
+	/** Quantity in the slot the player currently has selected (0 when that slot is empty). */
+	UFUNCTION(BlueprintPure, Category = "Inventory|QuickSlots")
+	static int32 GetSelectedQuickSlotItemCount(UUserWidget* QuickSlotsWidget);
+
 	/** Sets slot data directly in global player quickslots */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|QuickSlots")
 	static void SetQuickSlotData(int32 SlotIndex, const FQuickSlotData& InData);

@@ -322,11 +322,17 @@ bool UQuickSlotsInventorySystem::TryAddItemToPlayerInventory(
 		}
 	}
 
-	// 1. Attempt to merge into existing slots containing the same BlockID with remaining capacity
 	int32 TargetSlotIndex = -1; // 0-based
+
+	// 1. Attempt to merge into existing slots containing the same BlockID with remaining capacity.
+	//    ItemCount > 0 is required: a slot that still carries a BlockID with no items is empty
+	//    (a "ghost"), and merging into it would put the pickup in a slot the player sees as
+	//    empty instead of the first truly free one.
 	for (int32 i = 0; i < NUM_QUICK_SLOTS; ++i)
 	{
-		if (GPlayerQuickSlots[i].BlockID == BlockID && GPlayerQuickSlots[i].ItemCount < GPlayerQuickSlots[i].MaxStackSize)
+		if (GPlayerQuickSlots[i].BlockID == BlockID
+			&& GPlayerQuickSlots[i].ItemCount > 0
+			&& GPlayerQuickSlots[i].ItemCount < GPlayerQuickSlots[i].MaxStackSize)
 		{
 			TargetSlotIndex = i;
 			break;
@@ -779,11 +785,43 @@ void UQuickSlotsInventorySystem::UpdateAllQuickSlotOpacities(UUserWidget* QuickS
 
 FQuickSlotData UQuickSlotsInventorySystem::GetQuickSlotData(int32 SlotIndex)
 {
-	if (GPlayerQuickSlots.IsValidIndex(SlotIndex))
+	if (!GPlayerQuickSlots.IsValidIndex(SlotIndex))
 	{
-		return GPlayerQuickSlots[SlotIndex];
+		return FQuickSlotData();
 	}
-	return FQuickSlotData();
+
+	FQuickSlotData Slot = GPlayerQuickSlots[SlotIndex];
+
+	// A slot whose count reached zero is empty, whatever BlockID it still carries. Returning
+	// the ghost BlockID is what made a "visually empty" slot look like it held an item, so
+	// placement could ask to place a block the player no longer owned.
+	if (Slot.ItemCount <= 0)
+	{
+		Slot.BlockID = 0;
+		Slot.ItemCount = 0;
+	}
+
+	return Slot;
+}
+
+int32 UQuickSlotsInventorySystem::GetQuickSlotItemCount(int32 SlotIndex)
+{
+	return GetQuickSlotData(SlotIndex).ItemCount;
+}
+
+uint8 UQuickSlotsInventorySystem::GetQuickSlotBlockID(int32 SlotIndex)
+{
+	return GetQuickSlotData(SlotIndex).BlockID;
+}
+
+int32 UQuickSlotsInventorySystem::GetSelectedQuickSlotItemCount(UUserWidget* QuickSlotsWidget)
+{
+	if (!QuickSlotsWidget)
+	{
+		return 0;
+	}
+
+	return GetQuickSlotData(GetSelectedQuickSlotIndex(QuickSlotsWidget)).ItemCount;
 }
 
 void UQuickSlotsInventorySystem::SetQuickSlotData(int32 SlotIndex, const FQuickSlotData& InData)
@@ -799,7 +837,22 @@ void UQuickSlotsInventorySystem::SetQuickSlotData(int32 SlotIndex, const FQuickS
 
 	if (GPlayerQuickSlots.IsValidIndex(SlotIndex))
 	{
-		GPlayerQuickSlots[SlotIndex] = InData;
+		FQuickSlotData Data = InData;
+
+		// Normalise at the single write point: a slot with no items holds no block. Without
+		// this, a decremented stack leaves a BlockID ghost that the pickup merge step then
+		// treats as a valid target.
+		if (Data.ItemCount <= 0)
+		{
+			Data.ItemCount = 0;
+			Data.BlockID = 0;
+			if (Data.MaxStackSize <= 0)
+			{
+				Data.MaxStackSize = MAX_STACK_SIZE;
+			}
+		}
+
+		GPlayerQuickSlots[SlotIndex] = Data;
 	}
 }
 
@@ -836,8 +889,11 @@ int32 UQuickSlotsInventorySystem::GetSelectedQuickSlotIndex(UUserWidget* QuickSl
 			{
 				RawVal = BP->GetPropertyValue_InContainer(QuickSlotsWidget);
 			}
-			// SelectedID is typically 1..9, so return 0..8
-			return FMath::Clamp(RawVal - 1, 0, NUM_QUICK_SLOTS - 1);
+			// SelectedID on WB_QuickSlots is already a 0-based slot index: it is used directly
+			// to index the highlight and icon arrays (0..8). Subtracting one here shifted every
+			// read by a slot, so selecting slot 2 returned slot 1's block and placement consumed
+			// the wrong slot.
+			return FMath::Clamp(RawVal, 0, NUM_QUICK_SLOTS - 1);
 		}
 	}
 

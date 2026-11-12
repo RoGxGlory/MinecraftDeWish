@@ -265,6 +265,12 @@ void AGameplayPlayerController::HideInventory()
 
 void AGameplayPlayerController::HandlePlacePressed()
 {
+	// A Blueprint owns the placement graph by default; see bCppOwnsPlacement.
+	if (!bCppOwnsPlacement)
+	{
+		return;
+	}
+
 	// Place a block from the currently selected quick slot at the targeted location.
 	if (bInventoryOpen || bIsPaused)
 	{

@@ -13,7 +13,7 @@ AChunkActor::AChunkActor()
 	// Main mesh for solid blocks — full physics collision
 	ProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMesh"));
 	RootComponent = ProceduralMesh;
-	ProceduralMesh->bUseAsyncCooking = true;
+	ProceduralMesh->bUseAsyncCooking = false; // collision must be ready on the frame the block changes
 	ProceduralMesh->bUseComplexAsSimpleCollision = true;
 	ProceduralMesh->SetCastShadow(true);
 	ProceduralMesh->bAffectDistanceFieldLighting = false;
@@ -996,11 +996,22 @@ void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FCh
 	}
 	else
 	{
-		// Prefer UpdateMeshSection over CreateMeshSection when the section already exists
-		// and the triangle topology is unchanged: this avoids recreating the collision cook.
+		// Prefer UpdateMeshSection over CreateMeshSection when the geometry is byte-identical:
+		// this avoids recreating the collision cook.
+		//
+		// A triangle *count* comparison is not enough. A placed or broken block changes the
+		// face set without necessarily changing the number of triangles, and the index buffer
+		// (as well as the positions it points at) can differ at a constant count. Taking the
+		// Update path in that case leaves the old collider in place, so the player walks
+		// through the new block or is blocked by a face that no longer exists.
+		// Only an identical index buffer proves the topology did not move, so compare contents.
 		FProcMeshSection* ExistingSolid = ProceduralMesh ? ProceduralMesh->GetProcMeshSection(0) : nullptr;
 		const bool bCanUpdateSolid = ExistingSolid != nullptr
-			&& ExistingSolid->ProcIndexBuffer.Num() == InSolidMeshData.Triangles.Num();
+			&& ExistingSolid->ProcIndexBuffer.Num() == InSolidMeshData.Triangles.Num()
+			&& FMemory::Memcmp(
+				ExistingSolid->ProcIndexBuffer.GetData(),
+				InSolidMeshData.Triangles.GetData(),
+				static_cast<SIZE_T>(ExistingSolid->ProcIndexBuffer.Num()) * sizeof(int32)) == 0;
 
 		if (bCanUpdateSolid)
 		{
@@ -1018,10 +1029,9 @@ void AChunkActor::ApplyMeshData(const FChunkMeshData& InSolidMeshData, const FCh
 		}
 		else
 		{
-			if (ProceduralMesh)
-			{
-				ProceduralMesh->ClearMeshSection(0);
-			}
+			// Do NOT ClearMeshSection first: it rebuilds the collider from an empty section,
+			// which is the window where a pawn falls through the chunk. CreateMeshSection
+			// replaces the section and re-cooks collision in one step.
 			if (ProceduralMesh)
 			{
 				ProceduralMesh->CreateMeshSection_LinearColor(

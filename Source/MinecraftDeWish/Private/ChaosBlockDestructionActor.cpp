@@ -1,4 +1,5 @@
 #include "ChaosBlockDestructionActor.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -13,7 +14,15 @@ AChaosBlockDestructionActor::AChaosBlockDestructionActor()
 
 	ProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMesh"));
 	RootComponent = ProceduralMesh;
+
+	// Debris are purely cosmetic: they must never block, snag or push a pawn.
+	// The mesh sections are created with bCreateCollision = false; these calls make the
+	// "never collides" rule explicit on the component so nothing re-enables it later.
 	ProceduralMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ProceduralMesh->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
+	ProceduralMesh->SetGenerateOverlapEvents(false);
+	ProceduralMesh->SetCanEverAffectNavigation(false);
+
 	ProceduralMesh->SetCastShadow(true);
 	ProceduralMesh->SetMobility(EComponentMobility::Movable);
 
@@ -486,7 +495,7 @@ void AChaosBlockDestructionActor::BuildInitialMesh()
 		EmptyUVs,
 		MeshVertexColors,
 		MeshTangents,
-		false
+		false // bCreateCollision: debris never collide with the world or a pawn
 	);
 
 	if (CachedMaterial)

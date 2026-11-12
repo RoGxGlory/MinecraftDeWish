@@ -1868,8 +1868,8 @@ EPlaceBlockResult AWorldGenerator::TryPlaceBlock(
 	if (bPlayerInitiated)
 	{
 		const float DistSq = FVector::DistSquared(ReachOrigin, ReachTarget);
-		const float MaxReach = 400.0f; // 4 blocks
-		if (DistSq > FMath::Square(MaxReach + 50.0f)) // 50 UU tolerance
+		const float MaxReach = PlacementReach + PlacementReachTolerance;
+		if (DistSq > FMath::Square(MaxReach))
 		{
 			LastPlacementResult = EPlaceBlockResult::OutOfReach;
 			return LastPlacementResult;
@@ -1880,7 +1880,7 @@ EPlaceBlockResult AWorldGenerator::TryPlaceBlock(
 	if (bPlayerInitiated)
 	{
 		const double Now = FPlatformTime::Seconds();
-		if (Now - LastPlaceTimeSeconds < 0.2) // 200ms cooldown
+		if (Now - LastPlaceTimeSeconds < PlaceCooldown)
 		{
 			LastPlacementResult = EPlaceBlockResult::Cooldown;
 			return LastPlacementResult;
@@ -1920,7 +1920,7 @@ EPlaceBlockResult AWorldGenerator::TryPlaceBlock(
 
 	// G9 — attach direction (for torches and attaching blocks)
 	FIntVector AttachDir = FIntVector::ZeroValue;
-	EPlaceBlockResult AttachResult = ResolveAttachDirection(Voxel, BlockID, FIntVector::ZeroValue, AttachDir);
+	EPlaceBlockResult AttachResult = ResolveAttachDirection(Voxel, BlockID, Meta, AttachDir);
 	if (AttachResult != EPlaceBlockResult::Success)
 	{
 		LastPlacementResult = AttachResult;
@@ -1987,6 +1987,107 @@ EPlaceBlockResult AWorldGenerator::TryPlaceBlock(
 	return LastPlacementResult;
 }
 
+EPlaceBlockResult AWorldGenerator::CanPlaceAtVoxel(
+	const FIntVector& Voxel,
+	uint8 BlockID,
+	bool bPlayerInitiated,
+	const FVector& ReachOrigin,
+	const FVector& ReachTarget) const
+{
+	// Mirrors the gate order of TryPlaceBlock but writes nothing, consumes nothing and does
+	// not touch LastPlaceTimeSeconds. Used by Blueprint previews and by tests.
+
+	// G1 — reach
+	if (bPlayerInitiated)
+	{
+		const float MaxReach = PlacementReach + PlacementReachTolerance;
+		if (FVector::DistSquared(ReachOrigin, ReachTarget) > FMath::Square(MaxReach))
+		{
+			return EPlaceBlockResult::OutOfReach;
+		}
+
+		// G4 — cooldown
+		if (FPlatformTime::Seconds() - LastPlaceTimeSeconds < PlaceCooldown)
+		{
+			return EPlaceBlockResult::Cooldown;
+		}
+	}
+
+	// G2 — placeable
+	if (!FPlacementRules::IsPlaceableBlock(BlockID))
+	{
+		return EPlaceBlockResult::NotPlaceable;
+	}
+
+	// G5 — bounds
+	if (Voxel.Z < 0 || Voxel.Z >= ChunkHeight)
+	{
+		return EPlaceBlockResult::OutOfBounds;
+	}
+
+	// G6 — chunk resident
+	if (!FindChunkAt(Voxel.X, Voxel.Y))
+	{
+		return EPlaceBlockResult::ChunkUnloaded;
+	}
+
+	// G7 — replaceable target
+	const uint8 ExistingBlock = GetBlockAtVoxel(Voxel.X, Voxel.Y, Voxel.Z);
+	if (ExistingBlock != 0 && !FPlacementRules::IsReplaceableBlock(ExistingBlock))
+	{
+		return EPlaceBlockResult::Occupied;
+	}
+
+	// G8 — face-adjacent support
+	const bool bHasSupport = FPlacementRules::HasSupportFromNeighbours(
+		Voxel,
+		[this](const FIntVector& V) { return GetBlockAtVoxel(V.X, V.Y, V.Z); });
+	if (!bHasSupport)
+	{
+		return EPlaceBlockResult::NoSupport;
+	}
+
+	// G9 — attachment direction
+	FIntVector AttachDir = FIntVector::ZeroValue;
+	if (ResolveAttachDirection(Voxel, BlockID, 0, AttachDir) != EPlaceBlockResult::Success)
+	{
+		return EPlaceBlockResult::BadAttach;
+	}
+
+	// G10 — pawn overlap
+	if (AnyPawnOverlapsVoxel(Voxel))
+	{
+		return EPlaceBlockResult::BlockedByPawn;
+	}
+
+	return EPlaceBlockResult::Success;
+}
+
+FIntVector AWorldGenerator::ResolveVoxelFromWorld(const FVector& WorldLocation) const
+{
+	const FVector Scaled = WorldLocation / FMath::Max(BlockScale, KINDA_SMALL_NUMBER);
+	return FIntVector(
+		FMath::FloorToInt(Scaled.X),
+		FMath::FloorToInt(Scaled.Y),
+		FMath::FloorToInt(Scaled.Z));
+}
+
+FIntVector AWorldGenerator::ResolvePlacementVoxel(const FVector& ImpactPoint, const FVector& ImpactNormal) const
+{
+	// §4.2 — recover the hit voxel by stepping 0.25 blocks inward, then step one full voxel
+	// along the dominant axis of the normal. Integer stepping is exact for axis-aligned faces.
+	const FVector BreakSample = ImpactPoint - ImpactNormal * (BlockScale * 0.25f);
+	const FIntVector BreakVoxel = ResolveVoxelFromWorld(BreakSample);
+	return BreakVoxel + FPlacementRules::AxisStep(ImpactNormal);
+}
+
+uint8 AWorldGenerator::GetBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ) const
+{
+	uint8 BlockID = 0;
+	GetVoxelAt(VoxelX, VoxelY, VoxelZ, BlockID);
+	return BlockID;
+}
+
 AChunkActor* AWorldGenerator::FindChunkAt(int32 WorldX, int32 WorldY) const
 {
 	const int32 ChunkX = FMath::FloorToInt(static_cast<float>(WorldX) / static_cast<float>(CHUNK_SIZE_X));
@@ -1998,7 +2099,6 @@ AChunkActor* AWorldGenerator::FindChunkAt(int32 WorldX, int32 WorldY) const
 	}
 	return nullptr;
 }
-
 bool AWorldGenerator::PlaceBlockAtVoxel(int32 VoxelX, int32 VoxelY, int32 VoxelZ, uint8 BlockID, uint8 Meta, bool bPlayerInitiated)
 {
 	if (VoxelZ < 0 || VoxelZ >= ChunkHeight) return false;
@@ -2029,7 +2129,7 @@ bool AWorldGenerator::AnyPawnOverlapsVoxel(const FIntVector& Voxel) const
 			FBox VoxelBox(
 				FVector(Voxel.X * BlockScale, Voxel.Y * BlockScale, Voxel.Z * BlockScale),
 				FVector((Voxel.X + 1) * BlockScale, (Voxel.Y + 1) * BlockScale, (Voxel.Z + 1) * BlockScale));
-			if (FPlacementRules::VoxelOverlapsCapsule(Voxel, BlockScale, CapsuleCenter, CapsuleRadius, CapsuleHalfHeight, 5.0f))
+			if (FPlacementRules::VoxelOverlapsCapsule(Voxel, BlockScale, CapsuleCenter, CapsuleRadius, CapsuleHalfHeight, PlacementSkin))
 			{
 				return true;
 			}
@@ -2040,62 +2140,143 @@ bool AWorldGenerator::AnyPawnOverlapsVoxel(const FIntVector& Voxel) const
 
 bool AWorldGenerator::ConsumePlacementItem(uint8 BlockID)
 {
-	// Find the player's quick slot holding this block
-	if (UWorld* World = GetWorld())
+	UWorld* World = GetWorld();
+	if (!World)
 	{
-		if (APlayerController* PC = World->GetFirstPlayerController())
+		return false;
+	}
+
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC)
+	{
+		return false;
+	}
+
+	APawn* Pawn = PC->GetPawn();
+	if (!Pawn)
+	{
+		return false;
+	}
+
+	// GDD §3.8: consume from the SELECTED quick slot, never from another slot that happens
+	// to hold the same block. Scanning 0..8 first would decrement the wrong stack whenever
+	// the player carries the same block in two slots.
+	if (UUserWidget* QuickSlotsWidget = UQuickSlotsInventorySystem::ResolveQuickSlotsWidget(Pawn))
+	{
+		const int32 SelectedIndex = UQuickSlotsInventorySystem::GetSelectedQuickSlotIndex(QuickSlotsWidget);
+
+		FQuickSlotData Selected = UQuickSlotsInventorySystem::GetQuickSlotData(SelectedIndex);
+		if (Selected.BlockID != BlockID || Selected.ItemCount <= 0)
 		{
-			if (APawn* Pawn = PC->GetPawn())
+			// The selected slot does not hold the block being placed: ItemMismatch.
+			// If another slot does hold it, the caller's notion of the selected slot disagrees
+			// with this one (usually a stale QuickSlots widget reference in Blueprint). Log the
+			// two indices so the desync is visible instead of a silent refusal.
+			for (int32 i = 0; i < 9; ++i)
 			{
-				for (int32 i = 0; i < 9; ++i)
+				if (i == SelectedIndex)
 				{
-					FQuickSlotData SlotData = UQuickSlotsInventorySystem::GetQuickSlotData(i);
-					if (SlotData.BlockID == BlockID && SlotData.ItemCount > 0)
-					{
-						SlotData.ItemCount--;
-						if (SlotData.ItemCount <= 0)
-						{
-							SlotData.BlockID = 0;
-							SlotData.ItemCount = 0;
-						}
-						UQuickSlotsInventorySystem::SetQuickSlotData(i, SlotData);
-						return true;
-					}
+					continue;
+				}
+				const FQuickSlotData Other = UQuickSlotsInventorySystem::GetQuickSlotData(i);
+				if (Other.BlockID == BlockID && Other.ItemCount > 0)
+				{
+					UE_LOG(LogTemp, Warning,
+						TEXT("Placement: selected slot %d does not hold block %d, but slot %d does. ")
+						TEXT("The QuickSlots widget used for selection is probably stale."),
+						SelectedIndex, BlockID, i);
+					break;
 				}
 			}
+			return false;
+		}
+
+		Selected.ItemCount--;
+		if (Selected.ItemCount <= 0)
+		{
+			Selected.BlockID = 0;
+			Selected.ItemCount = 0;
+		}
+		UQuickSlotsInventorySystem::SetQuickSlotData(SelectedIndex, Selected);
+		return true;
+	}
+
+	// Fallback for a headless context (automation test, no HUD): first matching slot.
+	for (int32 i = 0; i < 9; ++i)
+	{
+		FQuickSlotData SlotData = UQuickSlotsInventorySystem::GetQuickSlotData(i);
+		if (SlotData.BlockID == BlockID && SlotData.ItemCount > 0)
+		{
+			SlotData.ItemCount--;
+			if (SlotData.ItemCount <= 0)
+			{
+				SlotData.BlockID = 0;
+				SlotData.ItemCount = 0;
+			}
+			UQuickSlotsInventorySystem::SetQuickSlotData(i, SlotData);
+			return true;
 		}
 	}
+
 	return false;
 }
 
-EPlaceBlockResult AWorldGenerator::ResolveAttachDirection(const FIntVector& Voxel, uint8 BlockID, const FIntVector& NormalStep, FIntVector& OutAttachDir) const
+EPlaceBlockResult AWorldGenerator::ResolveAttachDirection(const FIntVector& Voxel, uint8 BlockID, uint8 MetaHint, FIntVector& OutAttachDir) const
 {
-	// For torches (attaching blocks), resolve the attachment direction
-	if (BlockID == static_cast<uint8>(EBlockType::Torch) || BlockID == 19)
+	// Non-attaching blocks: no attach direction needed.
+	if (BlockID != static_cast<uint8>(EBlockType::Torch) && BlockID != 19)
 	{
-		// Check each face direction for a valid support
-		const FIntVector Directions[] = {
-			FIntVector(0, 0, -1), // floor
-			FIntVector(1, 0, 0),  // +X wall
-			FIntVector(-1, 0, 0), // -X wall
-			FIntVector(0, 1, 0),  // +Y wall
-			FIntVector(0, -1, 0), // -Y wall
-		};
-		for (const FIntVector& Dir : Directions)
-		{
-			uint8 NeighborBlock = 0;
-			GetVoxelAt(Voxel.X + Dir.X, Voxel.Y + Dir.Y, Voxel.Z + Dir.Z, NeighborBlock);
-			if (FPlacementRules::IsSupportBlock(NeighborBlock))
-			{
-				OutAttachDir = Dir;
-				return EPlaceBlockResult::Success;
-			}
-		}
-		return EPlaceBlockResult::BadAttach;
+		OutAttachDir = FIntVector(0, 0, -1);
+		return EPlaceBlockResult::Success;
 	}
-	// Non-attaching blocks: no attach direction needed
-	OutAttachDir = FIntVector(0, 0, -1); // default floor
-	return EPlaceBlockResult::Success;
+
+	// 1) Honour the caller's hint when it names a face that really carries a support.
+	//    A Blueprint that encodes the wrong thing (e.g. a voxel instead of a direction)
+	//    simply fails this test and falls through to the neighbourhood scan below.
+	if (MetaHint <= 4)
+	{
+		const FIntVector HintDir = FPlacementRules::DecodeAttachMeta(MetaHint);
+		uint8 HintNeighbour = 0;
+		GetVoxelAt(Voxel.X + HintDir.X, Voxel.Y + HintDir.Y, Voxel.Z + HintDir.Z, HintNeighbour);
+		if (FPlacementRules::IsSupportBlock(HintNeighbour))
+		{
+			// §3.5: a disabled mount (wall or ceiling) is a rejection, not a silent floor.
+			if (!FPlacementRules::IsAttachDirectionAllowed(HintDir, bAllowWallTorches, bAllowCeilingTorches))
+			{
+				return EPlaceBlockResult::BadAttach;
+			}
+			OutAttachDir = HintDir;
+			return EPlaceBlockResult::Success;
+		}
+	}
+
+	// 2) Fallback: first supported face, floor first (§3.5 ordering).
+	const FIntVector Directions[] = {
+		FIntVector(0, 0, -1), // floor
+		FIntVector(1, 0, 0),  // +X wall
+		FIntVector(-1, 0, 0), // -X wall
+		FIntVector(0, 1, 0),  // +Y wall
+		FIntVector(0, -1, 0), // -Y wall
+	};
+	for (const FIntVector& Dir : Directions)
+	{
+		uint8 NeighborBlock = 0;
+		GetVoxelAt(Voxel.X + Dir.X, Voxel.Y + Dir.Y, Voxel.Z + Dir.Z, NeighborBlock);
+		if (!FPlacementRules::IsSupportBlock(NeighborBlock))
+		{
+			continue;
+		}
+
+		if (!FPlacementRules::IsAttachDirectionAllowed(Dir, bAllowWallTorches, bAllowCeilingTorches))
+		{
+			return EPlaceBlockResult::BadAttach;
+		}
+
+		OutAttachDir = Dir;
+		return EPlaceBlockResult::Success;
+	}
+
+	return EPlaceBlockResult::BadAttach;
 }
 
 void AWorldGenerator::PlayPlacementFeedback(const FIntVector& Voxel, uint8 BlockID, uint8 Meta)
@@ -2144,7 +2325,7 @@ void AWorldGenerator::CascadeSupportLoss(const FIntVector& Voxel, int32 Depth)
 		{
 			// Check if the torch still has support
 			FIntVector AttachDir = FIntVector::ZeroValue;
-			if (ResolveAttachDirection(NeighborVoxel, NeighborBlock, FIntVector::ZeroValue, AttachDir) != EPlaceBlockResult::Success)
+			if (ResolveAttachDirection(NeighborVoxel, NeighborBlock, 0, AttachDir) != EPlaceBlockResult::Success)
 			{
 				// Torch lost support, remove it
 				uint8 DroppedID = 0;
