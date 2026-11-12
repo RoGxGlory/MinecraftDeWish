@@ -41,10 +41,20 @@ sodium light, a white statue that should not be there.*
 
 - Post-process + single LUT "Sodium Grade": high contrast in lows, soft rolloff
   in highs, 25-35% desaturation outside sodium.
-- Ash fog: reduces readability to 60-90 blocks. This serves the mechanic (the
-  Angel at 60 blocks must read as a silhouette, not a detail).
+- Ash fog: **measured** at `λ ≈ 16 blocks`, `p ≈ 1.37`. Silhouette readability
+  ends at **25 blocks**, material/colour at ~8–12 blocks. *(The former "60-90
+  blocks" target was withdrawn on 2026-11-12 — it is unreachable at this density,
+  and the density is kept. See `Docs/art/art-bible.md` §5.)*
+- Consequence: the Angel must read as a statue silhouette at **25 blocks**
+  (A1a), as a statue at **12 blocks** (A1b), and as bone stone at **3 blocks**
+  (A1c). It must be **lighter than the fog behind it at every distance**:
+  `L_statue ≥ 1.4 × L_fog_background`.
 - The torch is the brightest object on screen, always. That is the visual
-  hierarchy of the fantasy.
+  hierarchy of the fantasy. Quantified: `R_peak ≥ 2.0` (torch peak vs fog band),
+  `R_pool ≥ 1.5` (ground within 3 blocks vs same material far from any torch),
+  `R_bloom ≥ 8 px` (sodium reads as light, not a decal), and
+  `TDR = A_sodium / A_uiwarm ≥ 3.0` (the world's warm light must out-area the
+  UI's warm accent). Status: **contested** — see §14 and `art-bible.md` §4.2.
 - Day/night cycle (20 min) is kept; the grade is **constant**. Only the player's
   light changes. Phase 3 never brightens the world — the player installs light.
 
@@ -87,7 +97,9 @@ Skeleton. Spider gets its own skeleton.
 - **Acceptance criterion (angels.md §8.5):** a frozen statue is distinguishable
   without HUD. Resolved by three signals: smooth silhouette, material contrast,
   pose that changes between two glances.
-- At 60 blocks in fog: a clear, smooth, immobile shape, backlit. Enough.
+- At 25 blocks in fog (the measured visibility limit): a clear, smooth,
+  immobile shape, backlit. Enough. At 12 blocks it reads as a statue; at 3
+  blocks it must read as `#E3DCCB` bone. The 60-block criterion is cancelled.
 
 ## 7. Tools, weapons, hands
 
@@ -171,51 +183,59 @@ In six months, a screenshot of the game must be identifiable without a logo:
 *worn voxel world, sodium light, a white statue that should not be there.* If a
 player describes the Angel as "a mob", the contrast has failed.
 
-**Validation status (2026-11-11):** the first two signals (worn voxel world,
-sodium light) read clearly in the mood-board captures. The third (a white
-statue that should not be there) is **unvalidated** — no Angel appears in any
-of the 6 captures. Final approval of the art bible is blocked on A1
-(`Angel_60b_fog.png`). See `Docs/art/mood-board.md` → "Resolution of
-adjustments (A1-A6)".
+**Validation status (2026-11-12, rev 2):** one of three signals is validated (worn
+voxel world). The other two are now **measured**, and the picture is better than
+the previous revision reported:
+
+- *Sodium light* — **contested, not failed.** A second measurement pass on
+  `105418`/`105502` measures `R_peak` **2.14 / 2.40**, `R_pool` **1.89 / 2.30**
+  and bloom **40–200 px** — pass on all three targets. The earlier "≈ 1.0, no
+  pool, no halo" verdict is not reproducible, and its stated cause (a bright
+  cobblestone floor) was the torch's **own warm light pool**. The torch fix list
+  is **frozen** pending a sampler-based measurement. The one certain defect is
+  **colour**: the flame reads `#FFE08A` and the light is authored
+  `RGB (1.0, 0.78, 0.50)` — pale and green against sodium `#E8A33D`. See
+  `art-bible.md` §4.2.
+- *A white statue that should not be there* — **failed, and now quantified.** The
+  Angel reads `#6E7C74` against fog `#93A19A`: **`L_statue/L_fog = 0.56×`**
+  against a required `1.4×`, a 2.5× shortfall. It is also **one albedo change**
+  from passing: authoring the base colour to `#E3DCCB` projects `2.11×`. See
+  `art-bible.md` §8.1.
+
+The remaining certain defect in the *thesis* is the **UI accent**, which occupies
+0.73 % of every frame in the same hue the torch needs (art-bible §3.1).
+
+`Angel_60b_fog.png` is cancelled; its replacement is `Angel_25b_fog.png`.
 
 ---
 
 ## 15. Mood board & reference captures
 
-Source of truth for the in-engine reference set:
-`Docs/art/mood-board.md` (captures in `Docs/art/mood-board/`).
+**Statuses live in one place only:** `Docs/art/art-bible.md` §15 (A1–A6) and §16
+(open validations), mirrored by `Docs/art/mood-board/manifest.csv`. This section
+no longer restates them — it was a third copy and it drifted.
 
-**Approved (fully):** `Screenshot 2026-11-11 001008.png` (sunset/sky,
-atmospheric grade) — bone-ash dusk, desaturated, LUT-constant. A2 closed.
+**Summary as of 2026-11-12 (rev 2):**
 
-**Conditionally approved (subject to re-capture):** `000733`, `000817`,
-`000850` — usable for fog/terrain/block-readability reference once the
-pending items below are resolved.
+- 12 captures, 2 sets, `Docs/art/mood-board/`. **Set frozen** as the P2 target
+  set — contract in `art-bible.md` **§19**, folder guide in
+  `Docs/art/mood-board/README.md`.
+- **Approved:** `001008` (palette only — no sky visible), `105207` (A1b target),
+  `105250` (A1c **anti-target**), `105418` / `105502` (torch framing — verdict
+  contested).
+- **Excluded:** `Screenshot 2026-05-23 202820.png` (pre-overhaul, labelled
+  BEFORE) and `000917` (labelled cave, actually an outdoor forest).
+- **Withdrawn target:** "60-90 blocks of fog readability". Measured `λ ≈ 16
+  blocks`; silhouette ends at 25 blocks. Fog is kept, A1 is re-based (§3, §6).
+- **Sunset:** there is none. The day/night system authors no sun colour, so the
+  palette rule has nothing to violate yet — and the dusk grade is now constrained
+  to Bone → Ash → cold teal. The only warm light is the one the player installs.
 
-**Excluded:** `Screenshot 2026-05-23 202820.png` (pre-overhaul, BEFORE) and
-`Screenshot 2026-11-11 000917.png` (invalid cave capture).
+**Additional observations to action in P2** (detail in `art-bible.md` §7, §11, §16):
 
-**Open validations blocking final lock:**
-1. A1 — Angel silhouette at 60 blocks (`Angel_60b_fog.png`).
-2. A3 — torch luminance ratio (re-capture with torches in frame; target
-   torch peak >= 2x sky luminance).
-3. A4 — fog exponent vs. 60-block Angel readability (tune density curve,
-   not colour; target 60-90 block readability).
-4. A5 — cave void levels (real cave capture; clamp ambient/GI if over-lit;
-   unlit areas must read as Void #0B0E11).
-
-**Creative Director confirmation (2026-11-11):** the image-analyst was re-invoked
-by the Creative Director to re-verify all 6 captures. Results confirm the
-statuses above. The set of reference is frozen for P2 (see
-`Docs/art/art-bible.md` §18.2). Final lock remains blocked on A1. The sodium
-pillar is currently unproven visually — no sodium torch appears in any of the
-6 captures. Re-capture with torches in frame (A3) before final lock.
-
-**Additional observations to action in P2:**
-- Block boundaries and erosion/wear are not readable in `000850`; texture
-  pass must validate block edges + wear in PIE before expanding the 12 ruin
-  variants.
-- Fog reads grey-green rather than pure ash (#5C6268); verify fog colour
-  stays within Ash across biomes.
-- The orange top-left UI bar is the brightest warm element in several frames;
-  confirm with UI direction that it reads as UI, not scene light.
+- Block boundaries and erosion are not readable in `000850`; validate block edges
+  + wear in PIE before expanding the 12 ruin variants (V5).
+- Fog reads grey-green rather than pure Ash (`#5C6268`); verify fog colour stays
+  within Ash across biomes (V6).
+- The orange UI bar out-saturates every torch in the game. Sodium is now reserved
+  for world light; the UI accent moves to `#C08A45` (V7).

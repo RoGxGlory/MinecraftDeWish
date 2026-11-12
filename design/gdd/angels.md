@@ -62,7 +62,7 @@ An Angel is **observed** when at least one observer satisfies all of:
 
 | Observer | Cone | Range | Extra condition |
 |---|---|---|---|
-| **Player** | `110°` total (`FOVHalfAngle 55°`) | `60 blocks` | None |
+| **Player** | `110°` total (`FOVHalfAngle 55°`) | `25 blocks` | None |
 | **Camera** | `50°` total (`FOVHalfAngle 25°`) | `120 blocks` | **An operator (NPC or player) must be watching that camera feed**, and the camera must be powered |
 
 A camera with no operator observes nothing. This is the single most important rule in
@@ -213,7 +213,7 @@ changes a law of the world.
 |---|---|---|
 | `ObservationLatchTime` | `0.15 s` | Long enough to defeat look-tapping, short enough to feel instant |
 | `PlayerFOVHalfAngle` | `55°` | Matches what is on screen, not real vision |
-| `PlayerObserveRange` | `60 blocks` | Below the 96-block render distance, so observation never exceeds visibility |
+| `PlayerObserveRange` | `25 blocks` | Matches the fog's 25-block visibility (`art-bible.md` §5.1: `C(25) = 0.15`). The previous value of 60 was justified as "below the 96-block render distance" — that rationale was false, because visibility is set by fog, not by render distance |
 | `CameraFOVHalfAngle` | `25°` | Cameras are narrow — that is why a fortress needs many |
 | `CameraObserveRange` | `120 blocks` | Cameras see further than a human |
 | `AngelLightThreshold` | `7` (0–15) | Reuses the existing spawner convention |
@@ -225,6 +225,14 @@ changes a law of the world.
 | `HearingWallPenalty` | `4 blocks` per solid block | `Loudness - 4 × walls` |
 | `ConvergenceRadius` | `250 blocks` | The base's "reach" into the world |
 | `BaseSpeed` | TBD — faster than the player's sprint | An Angel in the open is a death sentence |
+
+> **Decision 2026-11-12 (Creative Director, cascade from `art-bible.md` §8.1):**
+> `PlayerObserveRange` drops **60 → 25 blocks**. The old value was justified by render
+> distance; the real constraint is fog visibility (`art-bible.md` §5.1, `C(25) = 0.15`).
+> The 25–60 block band was **blind observation**: the Angel froze for an observer who
+> could not see it. Freeze now equals what is on screen. Accepted trade-off: Angels
+> feel less "long-range hunted". Consequence: the §3.4 pose set and any visual tell
+> must read at **25 blocks**, not 60.
 
 Noise loudness (proposed):
 
@@ -340,4 +348,4 @@ Steps 1–7 are testable without any other new system. Every step needs an autom
 - Do camera operators panic and stop watching when an Angel gets close? (Proposed: yes, and
   it should be visible.)
 - Does the Source have Angels guarding it, or is the approach the puzzle?
-- What is the visual tell for "the statue is mid-step", and can it be read at 60 blocks?
+- What is the visual tell for "the statue is mid-step", and can it be read at 25 blocks?

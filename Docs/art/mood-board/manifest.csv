@@ -1,0 +1,13 @@
+file,set,captured,status,purpose,verdict,evidence,notes
+Screenshot 2026-05-23 202820.png,BEFORE,2026-05-23,excluded,pre-overhaul reference,EXCLUDED,flat vanilla lighting; no sodium; no ash fog; no post-process,LABELLED 'BEFORE (pre-overhaul)' — see README.md in this folder. Formerly cited as 000820 (wrong). Never a P2 target.
+Screenshot 2026-11-11 000733.png,1,2026-11-11,conditional,terrain at distance + fog,CONDITIONAL,dense fog; no torch in frame; no biome boundary,fog/terrain reference only
+Screenshot 2026-11-11 000817.png,1,2026-11-11,conditional,mid-range terrain,CONDITIONAL,single central tree; no biome boundary visible,no torches; transition unvalidated
+Screenshot 2026-11-11 000850.png,1,2026-11-11,conditional,block close-up,CONDITIONAL,block boundaries not readable at 1-2 b; no PBR response,blocks V5 texture pass
+Screenshot 2026-11-11 000917.png,1,2026-11-11,excluded,labelled cave,EXCLUDED,outdoor forest; no ceiling; no torch,Invalid capture. A5 still needs a real cave.
+Screenshot 2026-11-11 001008.png,1,2026-11-11,approved,palette reference,PASS (palette),no saturated warm colour anywhere; sky occluded,palette only. Sky grade unverified (V8). Analysts disagree on sky band.
+Screenshot 2026-11-11 105016.png,2,2026-11-11,conditional,open terrain + dense fog,CONDITIONAL,no Angel; no torch; very dense fog,hotbar slot 9 (UI state inconsistency); slab cut at top edge
+Screenshot 2026-11-11 105123.png,2,2026-11-11,conditional,open terrain + whiteout fog,CONDITIONAL,ambiguous central shape at 20-30 b; readability lost 25-40 b,Closest A1a evidence but not identifiable
+Screenshot 2026-11-11 105207.png,2,2026-11-11,approved,Angel at 10-14 blocks,PASS (A1b),reads as statue: wings; drapery; hands-on-face; decoloured by fog,C(12) approx 0.50 fog anchor
+Screenshot 2026-11-11 105250.png,2,2026-11-11,approved,Angel at ~3 blocks,FAIL (A1c),sharp silhouette; body #6E7C74 vs fog #93A19A = L_statue/L_fog 0.56x (target >=1.4x),ANTI-TARGET. Thesis failure evidence. P2 must produce its inverse.
+Screenshot 2026-11-11 105418.png,2,2026-11-11,approved,torch framing + warm-pool falloff,CONTESTED (A3),pass 2: R_peak 2.14; R_pool 1.89; bloom 40-70px; TDR ~2.7; flame core #FFE08A (pale yellow not sodium). Pass 1 reported no pool/no halo/R~1.0 - not reproducible.,Does NOT license the A3 verdict or any tuning. Use framing + falloff shape only.
+Screenshot 2026-11-11 105502.png,2,2026-11-11,approved,torch dominance at close range,CONTESTED (A3),pass 2: R_peak 2.40; R_pool 2.30; bloom 120-200px; TDR ~10.3; floor near #F0E4C4 vs far #9E9E96,This is the framing that works. Excludes debug tooltip 'Cobblestone / Durability: 2.5' and the HUD from reference.

@@ -61,10 +61,12 @@ without art-director approval.
 
 - Post-process + single LUT "Sodium Grade": high contrast in lows, soft rolloff
   in highs, 25–35% desaturation outside sodium.
-- Ash fog reduces readability to 60–90 blocks. The Angel at 60 blocks must read
-  as a silhouette, not a detail.
+- Ash fog is **measured** at `λ ≈ 16 blocks`, `p ≈ 1.37`: silhouette readability
+  ends at 25 blocks, material/colour at ~8–12. The former "60–90 blocks" target
+  is withdrawn (2026-11-12); the density is kept. See `art-bible.md` §5.
 - The torch is the brightest object on screen, always. Visual hierarchy of the
-  fantasy.
+  fantasy. Quantified: `R_peak ≥ 2.0`, `R_pool ≥ 1.5`, `R_bloom ≥ 8 px`
+  (`art-bible.md` §4.2).
 - Day/night cycle (20 min) kept; grade is constant. Phase 3 never brightens
   the world — the player installs light.
 - Weather modulates mood: rain (wet surfaces, more reflections), thick fog
@@ -185,7 +187,10 @@ are creatures of the world (flesh, bone, chitin); the Angel is stone.
 - Acceptance criterion (angels.md §8.5): a frozen statue is distinguishable
   without HUD, via three signals: smooth silhouette, material contrast, pose
   that changes between two glances.
-- At 60 blocks in fog: a clear, smooth, immobile shape, backlit. Enough.
+- At 25 blocks in fog (measured visibility limit): a clear, smooth, immobile
+  shape, backlit. Enough. 12 blocks = statue; 3 blocks = `#E3DCCB` bone. The
+  statue must satisfy `L_statue ≥ 1.4 × L_fog_background` at every distance from
+  3 to 25 blocks. The 60-block criterion is cancelled (`art-bible.md` §8.1).
 - Angel material contrast with the voxel world is the entire visual identity. If
   a player describes the Angel as "a mob", the contrast has failed.
 
@@ -414,29 +419,25 @@ Source: `Docs/technical-contract.md` §8.
 
 ---
 
-## 19. Creative Director confirmation (2026-11-11)
+## 19. A1–A6 status (pointer — do not restate)
 
-The image-analyst was re-invoked by the Creative Director to re-verify the
-6 mood-board captures. Results confirm the statuses documented in
-`Docs/art/art-bible.md` §18.3:
+Statuses are maintained in exactly one place: `Docs/art/art-bible.md` §15
+(A1–A6) and §16 (open validations), indexed by
+`Docs/art/mood-board/manifest.csv`. This section previously held a third copy and
+drifted out of sync; it no longer does.
 
-- **A1 (Angel silhouette at 60 blocks):** BLOCKED — no capture contains an Angel.
-  Core acceptance criterion (angels.md §8.5) unvalidated.
-- **A2 (sunset/sky palette):** PASS — sky reads as bone-ash desaturated grey-green
-  (~#8E9A90–#B5BAA8); no vivid orange. LUT keeps the world desaturated.
-- **A3 (torch dominance ratio):** PENDING — no sodium torch in any frame; target
-  torch peak ≥ 2× sky luminance. Sodium pillar currently unproven visually.
-- **A4 (fog knee):** PENDING — fog kills readability at ~10–15 blocks (vs 60–90
-  target). Tune exponent/density, not colour; keep within Ash (#5C6268).
-- **A5 (cave void levels):** PENDING — `000917` is an outdoor forest, not a cave.
-  Unlit areas must read as Void (#0B0E11); clamp GI if over-lit.
-- **A6 (early-reference hygiene):** PASS — `000820` (2026-05-23) confirmed
-  pre-overhaul; excluded from P2 reference set.
+**Current position (2026-11-12, rev 2):**
 
-**Reference set frozen for P2:** `001008` fully approved; `000733`/`000817`/`000850`
-conditionally approved (subject to A3/A4/block boundaries); `000820`/`000917` excluded.
+| # | Status |
+|---|---|
+| A1 | **RE-BASED + MEASURED** — 60 blocks unreachable (`C(60)=0.002`). 25 b silhouette / 12 b statue (PASS) / 3 b bone colour (**FAIL at `0.56×`** vs required `1.4×`). One albedo fix projects `2.11×`. |
+| A2 | **PASS on the rule** — no sunset exists (no sun colour authored); warm census clean. Sky unverified → V8. Rule now falsifiable (hue/sat/value thresholds). |
+| A3 | **CONTESTED** — was `FAIL`. Pass 2 measures `R_peak` 2.14/2.40, `R_pool` 1.89/2.30, bloom 40–200 px → pass on all three. **Fix list frozen** pending sampler-based V2. Certain defect: torch light colour is not sodium. |
+| A4 | **CLOSED** — curve `λ ≈ 16 b`, `p ≈ 1.37`; 60–90 block target withdrawn. **Authoring not done:** `p > 1` needs two components; procedure in art-bible §5.5. |
+| A5 | **OPEN, now reachable** — caves generate. Void is a 4-level ladder (L0–L3); acceptance: L0 ≥70 % ≤ RGB 25, 0 % > RGB 40. |
+| A6 | **CLOSED** — file is `Screenshot 2026-05-23 202820.png` (not `000820`); excluded; folder `README.md` labels it BEFORE. |
 
-**P2 must start with P2.0** (resolve A1/A3/A4/A5) before any asset work.
+**P2 starts with P2.0a** (two single-value fixes: Angel albedo, torch colour),
+then P2.0b (measure), then P2.0c (author the fog) — before any grade or asset work.
 
-*Last updated: 2026-11-11. Owner: Technical Artist (under Art Director). Creative
-Director finalisation pass recorded in `Docs/art/art-bible.md` §18.*
+*Last updated: 2026-11-12. Owner: Technical Artist (under Art Director).*
